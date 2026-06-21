@@ -1,0 +1,15 @@
+{
+  "name": "hify",
+  "private": true,
+  "packageManager": "pnpm@11.8.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "web:dev": "pnpm --filter @hify/web dev",
+    "web:build": "pnpm --filter @hify/web build",
+    "web:lint": "pnpm --filter @hify/web lint",
+    "web:type-check": "pnpm --filter @hify/web type-check",
+    "web:test": "pnpm --filter @hify/web test"
+  }
+}
