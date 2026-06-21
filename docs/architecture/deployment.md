@@ -148,6 +148,7 @@ API 必须无状态：
 - `ingestion`：下载、解析、清洗和切分文档。
 - `embedding`：调用 Embedding API 并写入 pgvector。
 - `llm_batch`：非交互式批量模型调用。
+- `events`：Transactional Outbox 发布和集成事件消费。
 - `maintenance`：清理、统计、Job 对账和失败恢复。
 
 一期使用 1 个 Worker Deployment、Prefork Concurrency 4，并消费四个命名队列。`worker_prefetch_multiplier=1`。
@@ -165,7 +166,7 @@ Worker 不负责：
 职责：
 
 - 用户、团队、Agent、工作流、会话、消息和 Run 的业务数据。
-- Job、Outbox、用量和审计记录。
+- `jobs` 模块拥有的 Job、共享消息基础设施拥有的 Outbox/Inbox、用量和审计记录。
 - 知识库元数据、Chunk 和向量索引。
 - LangGraph 所需的 Hify 自有 Run State；禁止把 LangGraph 内部对象作为主业务模型。
 
@@ -285,11 +286,13 @@ sequenceDiagram
     participant R as Redis
     participant X as Egress Proxy
     participant L as LLM/MCP
+    participant W as Event Worker
 
     B->>E: POST /api/runs
     E->>A: Forward request
     A->>P: Validate user, load Agent version
-    A->>P: Create pending Run and initial message
+    A->>P: conversations commits user message
+    A->>P: runs commits pending Run
     A-->>B: Run ID and SSE URL
     B->>E: GET /events/runs/{id}
     E->>A: SSE connection
@@ -304,20 +307,24 @@ sequenceDiagram
         A-->>B: Hify SSE event
         A->>P: Persist batched events and steps
     end
-    A->>P: Finalize Run, message, usage
+    A->>P: Finalize Run + RunCompletedV1 Outbox
     A->>R: Release lease
     A-->>B: run.completed
+    W->>P: Claim and publish Outbox event
+    W->>P: conversations consumer commits assistant message
+    W->>P: usage consumer commits usage record
 ```
 
 关键规则：
 
-- `POST /api/runs` 只创建 `pending` Run，不启动模型调用。处理 SSE 请求的 API 副本通过原子状态更新把 Run 从 `pending` 改为 `running` 并取得执行权，因此不需要负载均衡 Sticky Session。
+- `POST /api/runs` 由 `StartAgentRunProcess` 执行 Saga：先提交用户消息，再提交 `pending` Run。第二步失败时把消息标记为失败；两个步骤共享业务幂等键，但不共享数据库事务。
+- POST 不启动模型调用。处理 SSE 请求的 API 副本通过原子状态更新把 Run 从 `pending` 改为 `running` 并取得执行权，因此不需要负载均衡 Sticky Session。
 - 同一个 Run 只允许一个成功 Claim；重复 SSE 请求返回当前状态，禁止启动第二次执行。
 - `running` Run 保存 `owner_instance_id` 和 `lease_expires_at`；执行副本每 15 秒续租 45 秒。Reconciler 将租约过期的 Run 标记为 `interrupted`，当前阶段不自动恢复生成。
 - 创建 Run 和建立 SSE 是两个请求，浏览器断线后可以使用 Run ID 查询最终状态。
 - 当前阶段不支持从任意 Token 无损恢复流；API 重启会把未结束 Run 标记为 `interrupted`。
 - SSE 每 15 秒发送 Heartbeat，代理不得缓冲。
-- 模型输出事件先分批持久化，再发送完成状态；最终消息和用量必须事务性提交。
+- 模型输出事件先分批持久化。`runs` 完成状态和 `RunCompletedV1` Outbox 在同一本地事务提交；`conversations` 和 `usage` 通过事件最终一致，分别按 `source_run_id` 和 `attempt_id` 幂等写入。
 - 工具和 MCP 调用均通过 Egress Guard，工具结果回到同一个 Run Loop。
 
 ### 4.3 文档上传和 RAG 索引
@@ -329,6 +336,7 @@ sequenceDiagram
     participant S as Object Storage
     participant P as PostgreSQL
     participant R as Redis/Celery
+    participant D as Outbox Dispatcher
     participant W as Worker
     participant L as Embedding API
 
@@ -338,8 +346,10 @@ sequenceDiagram
     B->>S: Direct upload
     B->>A: Complete upload
     A->>S: Verify size/hash/metadata
-    A->>P: Create document and job(pending)
-    A->>R: Enqueue ingestion job
+    A->>P: knowledge commits document
+    A->>P: jobs commits pending Job + Outbox
+    D->>P: Claim Outbox event
+    D->>R: Enqueue ingestion job
     R->>W: Consume job
     W->>S: Download document
     W->>W: Parse, clean, chunk
@@ -349,14 +359,15 @@ sequenceDiagram
     B->>A: Poll document/job status
 ```
 
-Job 使用数据库唯一幂等键。Worker 崩溃或 Redis 丢失任务时，Reconciler 重新投递 `pending/running` 且租约过期的 Job。
+文档完成接口使用 `CompleteDocumentUploadProcess` 协调 `knowledge` 和 `jobs` 两个本地事务。Job 使用数据库唯一幂等键；第二步失败可用同一幂等键重试。Worker 崩溃或 Redis 丢失任务时，Reconciler 重新投递 `pending/running` 且租约过期的 Job。
 
 ### 4.4 后台工作流和批处理
 
 非交互式任务流程：
 
 ```text
-API -> PostgreSQL 创建 Job -> Redis/Celery -> Worker
+API -> jobs 本地事务创建 Job + Outbox
+Outbox Dispatcher -> Redis/Celery -> Worker
 Worker -> LLM/Tool -> PostgreSQL 持久化进度和结果
 Browser -> API 查询 Job 状态
 ```

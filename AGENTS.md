@@ -63,9 +63,17 @@ explicit architecture decision in `docs/architecture/`.
 ## Required Repository Shape
 
 ```text
-apps/web/                         # Next.js application
+apps/web/
+├── src/app/                      # Next.js routes and composition only
+├── src/features/                 # Product feature UI and feature-local logic
+├── src/components/ui/            # Reusable presentation primitives
+├── src/lib/api/generated/        # Generated FastAPI client; never hand-edit
+├── src/lib/sse/                  # Hify SSE transport and event decoding
+├── src/lib/server/               # Server-only web adapters
+└── tests/                         # Web unit and integration tests
 backend/src/hify/bootstrap/       # Process startup and dependency wiring
 backend/src/hify/modules/         # Business modules
+backend/src/hify/processes/       # Cross-module application processes/Sagas
 backend/src/hify/shared/          # Business-neutral shared primitives
 backend/tests/                    # Architecture, unit, integration, and E2E tests
 backend/migrations/               # Alembic migrations
@@ -92,9 +100,40 @@ Place code in the module that owns the data and its state transitions:
 | `tools` | Built-in and HTTP tool definitions, authorization, execution |
 | `mcp` | MCP connections, discovery, MCP tool adaptation |
 | `usage` | Token usage, quotas, costs, audit records |
+| `jobs` | Durable background jobs, claims, leases, retries, and reconciliation |
 
 If ownership is ambiguous, resolve it before writing code. Never duplicate the
 same mutable data in two modules.
+
+### Allowed synchronous dependencies
+
+The table is an allowlist. A module may synchronously import only the listed
+modules' `contracts`; an empty entry means no synchronous business-module
+dependency.
+
+| Consumer | May depend on |
+|---|---|
+| `identity` | None |
+| `providers` | `identity` |
+| `jobs` | `identity` |
+| `mcp` | `identity` |
+| `knowledge` | `identity`, `providers` |
+| `tools` | `identity`, `mcp` |
+| `workflows` | `identity`, `providers`, `tools` |
+| `agents` | `identity`, `providers`, `knowledge`, `workflows`, `tools` |
+| `conversations` | `identity`, `agents` |
+| `runs` | `identity`, `agents`, `conversations`, `providers`, `knowledge`, `workflows`, `tools` |
+| `usage` | `identity`; writes from other modules arrive through events |
+
+`hify.processes` may call multiple module contracts but owns no module tables.
+Event consumers may import the publishing module's event
+contract; they must not call back synchronously into the publisher as part of
+the same event flow.
+
+`identity.contracts.ActorContext` is the authenticated caller contract passed
+to user-facing application handlers. API code authenticates it; the owning
+module's Application layer enforces operation-specific authorization. Worker
+handlers use an explicit service actor, never a fabricated user identity.
 
 ## Mandatory Module Layers
 
@@ -149,7 +188,7 @@ Create a directory only when it contains real code.
 
 ### Contracts
 
-- Is the module's only public import surface.
+- Is the module's only public import surface for other business modules.
 - Contains Protocols, immutable DTOs, versioned integration events, and stable
   public errors only.
 - Contract DTOs use `@dataclass(frozen=True, slots=True)`.
@@ -159,7 +198,8 @@ Create a directory only when it contains real code.
 ### Wiring
 
 - Creates and connects repositories, adapters, and handlers for one module.
-- May be imported only by `hify.bootstrap`.
+- May be imported only by `hify.bootstrap`; Bootstrap may also register module
+  API routers. This is the explicit exception to the Contracts-only rule.
 - Business decisions do not belong in `wiring.py` or the dependency container.
 
 ## Import Rules
@@ -168,13 +208,16 @@ These rules are absolute:
 
 1. A module may import another module only through
    `hify.modules.<other>.contracts`.
-2. Domain code may not import any other business module, including contracts.
-3. API may not import Infrastructure.
-4. Application may not import ORM models, database sessions, FastAPI, or SDKs.
-5. Another module may not import `wiring.py`.
-6. `bootstrap` is the only package allowed to wire multiple module
+2. The import must also be allowed by the synchronous dependency allowlist.
+3. Domain code may not import any other business module, including contracts.
+4. API may not import Infrastructure.
+5. Application may not import ORM models, database sessions, FastAPI, or SDKs.
+6. Another module may not import `wiring.py`.
+7. `bootstrap` is the only package allowed to wire multiple module
    implementations together.
-7. Circular imports, runtime imports used to hide a cycle, and `TYPE_CHECKING`
+8. `processes` may import multiple modules' Contracts but may not import module
+   Domain, Application, Infrastructure, API, or Wiring.
+9. Circular imports, runtime imports used to hide a cycle, and `TYPE_CHECKING`
    used to bypass boundaries are prohibited.
 
 ## Cross-Module Calls
@@ -200,15 +243,25 @@ Use exactly one of these mechanisms:
 - Publish a versioned event such as `AgentPublishedV1` through a transactional
   outbox.
 - Consumers deduplicate by `event_id`.
+- A database consumer writes its Inbox receipt and module state in one local
+  transaction. External effects are represented by an idempotent Job, not
+  executed inside the Inbox transaction.
 - Create a new event version when field meaning or compatibility changes.
 
 ### Multi-module use case
 
-- Put orchestration involving three or more modules in
-  `hify.bootstrap.orchestrators`.
-- Orchestrators call contracts only and must define idempotency, retry, and
+- Put any use case that mutates two or more modules in `hify.processes`.
+- Process Managers call contracts only and must define idempotency, retry, and
   compensation. They do not access repositories or open cross-module
   transactions.
+- Each module commits one local transaction. If a later step fails, the Process
+  Manager runs an explicit compensating command; it never rolls back an
+  already committed transaction in another module.
+- If the flow crosses an HTTP/task boundary or compensation may need retry, the
+  Process Manager stores durable saga state through the `jobs` contract.
+- Cross-module HTTP endpoints remain thin adapters in `bootstrap/routes/`: they
+  parse input, call one Process handler, and map the response. Process logic
+  itself stays in `hify.processes`.
 
 ## Database Rules
 
@@ -223,6 +276,10 @@ Use exactly one of these mechanisms:
 - Prefix migration filenames with the owner module.
 - Every schema change requires an Alembic migration; never rely on ORM
   auto-creation in production.
+- `platform_outbox` and `platform_inbox_receipts` are the only ownership
+  exceptions. `hify.shared.infrastructure.messaging` owns them; modules append
+  Outbox records through their Unit of Work and never query these tables
+  directly.
 
 ## AI Runtime Boundaries
 
@@ -234,6 +291,9 @@ Use exactly one of these mechanisms:
 - Provider SDK imports are restricted to
   `modules/providers/infrastructure/adapters/<provider>/`.
 - MCP SDK imports are restricted to `modules/mcp/infrastructure/`.
+- `tools` owns the unified tool catalog, authorization, and `ToolExecutor`.
+  It delegates MCP protocol operations through `mcp.contracts`; `runs` depends
+  only on `tools.contracts` and never calls `mcp` directly.
 - pgvector queries are restricted to `modules/knowledge/infrastructure/`.
 - Interactive runs stream through a `RunExecutor` and Hify-defined `RunEvent`.
   Do not implement interactive runs as ordinary Celery tasks.
@@ -263,6 +323,13 @@ Otherwise keep it in the owner module. Do not move duplicated business logic to
   UI state; add global client state only when multiple unrelated routes need it.
 - Treat Hify SSE events as the public streaming protocol. Do not expose
   LangGraph event objects to the browser.
+- `src/app` contains route files, layouts, and composition only; reusable
+  business UI belongs in `src/features/<feature>`.
+- A feature may import `components/ui`, `lib`, and another feature's public
+  `index.ts`; it must not import another feature's internal files.
+- `src/lib/api/generated` is regenerated from OpenAPI and never edited by hand.
+- `src/lib/server` must not be imported by Client Components. Browser-safe
+  modules must not read secrets or server environment variables.
 
 ## Coding Standards: 20 Mandatory Rules
 
@@ -436,6 +503,8 @@ Before finishing, verify:
 
 - The owner module and layer are correct.
 - Cross-module imports stop at `contracts`.
+- Synchronous cross-module imports are present in the dependency allowlist.
+- Multi-module writes are implemented as a Process Manager/Saga.
 - No framework or SDK type leaks into Domain or Contracts.
 - No repository touches another module's table.
 - Events are versioned and consumers are idempotent.

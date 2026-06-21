@@ -32,7 +32,7 @@ backend/
 │   │   ├── celery.py
 │   │   ├── container.py
 │   │   ├── settings.py
-│   │   └── orchestrators/
+│   │   └── routes/              # 跨模块 Process 的薄 HTTP Adapter
 │   ├── modules/
 │   │   ├── identity/
 │   │   ├── providers/
@@ -43,7 +43,9 @@ backend/
 │   │   ├── workflows/
 │   │   ├── tools/
 │   │   ├── mcp/
-│   │   └── usage/
+│   │   ├── usage/
+│   │   └── jobs/
+│   ├── processes/             # 跨模块应用流程和 Saga
 │   └── shared/
 │       ├── domain/
 │       ├── application/
@@ -56,7 +58,7 @@ backend/
     └── e2e/
 ```
 
-`bootstrap` 是唯一允许同时导入多个模块实现层的位置。它只负责组装依赖、注册路由、启动进程和跨模块用例编排，不包含业务规则。
+`bootstrap` 是唯一允许同时导入多个模块实现层的位置。它只负责组装依赖、注册路由和启动进程，不包含业务规则。`processes` 负责跨模块应用流程，只能导入模块 Contracts，不能导入任何模块实现层或直接访问数据库。
 
 ## 3. 模块所有权
 
@@ -72,8 +74,58 @@ backend/
 | `tools` | 内置工具和 HTTP 工具的定义、授权、调用 |
 | `mcp` | MCP Server 连接、能力发现、MCP 工具适配 |
 | `usage` | Token 用量、额度、成本、审计记录 |
+| `jobs` | 持久后台任务、Claim、租约、重试、状态和 Reconciler |
 
 归属判断规则：创建、修改和删除某类数据的模块即为所有者。非所有者禁止直接写入该模块的数据表。
+
+### 3.1 同步依赖白名单
+
+业务模块只能同步依赖下表列出的模块，并且只能导入其 `contracts`：
+
+| 调用方 | 允许同步依赖 |
+|---|---|
+| `identity` | 无 |
+| `providers` | `identity` |
+| `jobs` | `identity` |
+| `mcp` | `identity` |
+| `knowledge` | `identity`、`providers` |
+| `tools` | `identity`、`mcp` |
+| `workflows` | `identity`、`providers`、`tools` |
+| `agents` | `identity`、`providers`、`knowledge`、`workflows`、`tools` |
+| `conversations` | `identity`、`agents` |
+| `runs` | `identity`、`agents`、`conversations`、`providers`、`knowledge`、`workflows`、`tools` |
+| `usage` | `identity`；其他模块通过事件写入用量 |
+
+`hify.processes` 可以调用多个模块 Contracts，但不拥有模块数据表。事件消费者可以导入发布方的事件 Contract；禁止在处理事件时同步回调发布方形成逻辑环。
+
+认证后的调用者统一使用 `identity.contracts.ActorContext`。API 只负责认证并构造 ActorContext，具体操作权限由所有者模块 Application Handler 校验，禁止把授权规则放入 Router。
+
+### 3.2 前端结构
+
+```text
+apps/web/
+├── src/
+│   ├── app/                  # Next.js Route、Layout 和页面组合
+│   ├── features/             # 按产品能力组织的 UI
+│   ├── components/ui/        # 无业务含义的展示组件
+│   ├── lib/api/generated/    # OpenAPI 生成客户端，禁止手改
+│   ├── lib/sse/              # Hify SSE 协议和 Transport
+│   └── lib/server/           # 仅服务端可用的适配器
+└── tests/
+```
+
+`src/app` 不放可复用业务逻辑。Feature 只能导入 `components/ui`、`lib` 和其他 Feature 的公开 `index.ts`，禁止导入其他 Feature 内部文件。`lib/server` 禁止被 Client Component 导入。
+
+### 3.3 Process Manager 结构
+
+```text
+processes/
+├── start_agent_run.py
+├── complete_document_upload.py
+└── README.md
+```
+
+每个文件只定义一个跨模块 Command 和 Handler。Handler 只能依赖模块 Contracts；不定义 Entity、Repository 或数据库表。跨模块 HTTP Endpoint 位于 `bootstrap/routes/<process>.py`，只负责解析输入、调用一个 Process Handler 和转换响应；`bootstrap/api.py` 只注册 Router。
 
 ## 4. 标准模块模板
 
@@ -199,7 +251,7 @@ Router 函数只执行四步：解析输入、构造 Command/Query、调用 Hand
 
 ### 5.5 Contracts
 
-`contracts` 是模块唯一公开入口，只允许包含：
+`contracts` 是其他业务模块唯一允许导入的公开入口，只允许包含：
 
 - 跨模块服务的 `Protocol`。
 - 不可变输入输出 DTO。
@@ -214,6 +266,8 @@ Router 函数只执行四步：解析输入、构造 Command/Query、调用 Hand
 
 契约 DTO 使用 `@dataclass(frozen=True, slots=True)`，不得复用 API Pydantic Schema。
 
+`bootstrap` 导入模块 `wiring.py` 和注册 API Router 是显式例外，不代表业务模块可以绕过 Contracts。
+
 ## 6. 层间依赖矩阵
 
 `允许` 表示可以直接 import，`禁止` 表示架构测试必须报错。
@@ -221,9 +275,9 @@ Router 函数只执行四步：解析输入、构造 Command/Query、调用 Hand
 | 来源 | shared | 本模块 contracts | 本模块 domain | 本模块 application | 本模块 infrastructure | 本模块 api | 其他模块 contracts | 其他模块内部 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | `domain` | 允许 | 禁止 | 允许 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 |
-| `application` | 允许 | 允许 | 允许 | 允许 | 禁止 | 禁止 | 允许 | 禁止 |
+| `application` | 允许 | 允许 | 允许 | 允许 | 禁止 | 禁止 | 白名单允许 | 禁止 |
 | `api` | 允许 | 允许 | 允许异常类型 | 允许 | 禁止 | 允许 | 禁止 | 禁止 |
-| `infrastructure` | 允许 | 允许 | 允许 | 允许端口 | 允许 | 禁止 | 允许 | 禁止 |
+| `infrastructure` | 允许 | 允许 | 允许 | 允许端口 | 允许 | 禁止 | 白名单允许 | 禁止 |
 | `contracts` | 标准库优先 | 允许 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 |
 | `wiring` | 允许 | 允许 | 允许 | 允许 | 允许 | 允许 | 允许 | 禁止 |
 
@@ -284,19 +338,34 @@ class AgentPublishedV1:
 
 ### 7.4 跨模块流程
 
-同时协调三个及以上模块的用户用例放在 `bootstrap/orchestrators/<use_case>.py`。Orchestrator 只能调用模块 Contracts，禁止访问 Repository、ORM Model 或领域对象。
+任何同时修改两个及以上模块的用户用例都放在 `processes/<use_case>.py`。Process Manager 只能调用模块 Contracts，禁止访问 Repository、ORM Model 或领域对象。
 
-Orchestrator 不提供跨模块原子事务。每一步必须幂等，并明确失败后的重试或补偿行为。
+Process Manager 使用 Saga：每个模块提交一个本地事务，每一步必须幂等；后续步骤失败时调用显式补偿 Command，禁止共享 Session 或回滚另一个模块已经提交的事务。流程跨越 HTTP/Task 边界或补偿需要重试时，必须通过 `jobs` Contract 保存持久 Saga 状态。
+
+对话启动使用 `StartAgentRunProcess`：
+
+1. `conversations` 幂等写入用户消息并提交。
+2. `runs` 使用 `message_id` 和同一业务幂等键创建 `pending` Run 并提交。
+3. 第二步失败时，调用 `conversations.mark_message_failed`；重试不得创建第二条消息。
+
+Run 完成时不执行跨模块事务：`runs` 在完成事务中同时写入 `RunCompletedV1` Outbox；`conversations` 按 `source_run_id` 幂等追加助手消息，`usage` 按 `attempt_id` 幂等记录用量。
 
 ## 8. 数据库边界
 
-1. 每张表由一个模块拥有，表名使用模块前缀，例如 `agents_agents`、`runs_steps`。
+1. 每张业务表由一个模块拥有，表名使用模块前缀，例如 `agents_agents`、`runs_steps`。
 2. Repository 只能查询和写入本模块拥有的表。
 3. 禁止跨模块 ORM Relationship。
 4. 跨模块引用只保存 UUID，例如 `model_id`，不得加载其他模块 ORM 对象。
 5. 禁止跨模块数据库外键。存在性和权限通过 Contract 校验。
 6. 禁止跨模块 SQL JOIN。列表展示需要组合数据时，由 Query Handler 批量调用 Contract，或维护事件驱动的本地读模型。
 7. Migration 文件名必须以模块名开头，例如 `agents_20260621_add_version.py`。
+8. `platform_outbox` 和 `platform_inbox_receipts` 是仅有的表归属例外，由 `shared.infrastructure.messaging` 管理。模块通过 Unit of Work 在本地事务中追加 Outbox，禁止直接查询或更新平台消息表。
+
+### 8.1 Jobs 与 Outbox
+
+`jobs` 只拥有后台 Job 的生命周期、Claim、租约、重试计划、状态和 Reconciler，不包含知识库解析或模型调用等领域执行逻辑。具体 Celery Task 仍放在发起业务模块的 `infrastructure/tasks.py`，接收 `job_id` 并通过 Jobs Contract 更新状态。
+
+Outbox Dispatcher 运行在 Worker 的 `events` 队列：读取 `platform_outbox`、至少一次发布事件并标记已发送，因此消费者必须容忍重复投递。数据库消费者必须在同一本地事务中写入 `platform_inbox_receipts(event_id, consumer)` 和模块状态；唯一约束拒绝重复事件。需要外部副作用时先创建幂等 Job，禁止在 Inbox 事务中直接调用外部服务。
 
 ## 9. AI Runtime 特别规则
 
@@ -328,7 +397,7 @@ modules/providers/infrastructure/adapters/<provider>/
 
 ### 9.4 MCP 隔离
 
-MCP SDK 只能出现在 `modules/mcp/infrastructure`。`tools` 和 `runs` 通过 `McpToolExecutor` Contract 调用，不得持有 MCP Session 或 SDK 类型。
+MCP SDK 只能出现在 `modules/mcp/infrastructure`。`mcp` 负责连接、发现和协议调用；`tools` 负责统一 Tool Catalog、权限、Schema 和 `ToolExecutor`，并通过 `mcp.contracts` 委托 MCP 调用。Agent 只绑定 `tools` 模块的 `tool_id`，`runs` 只依赖 `tools.contracts`，禁止直接调用 `mcp`。
 
 ### 9.5 RAG 隔离
 
@@ -365,10 +434,12 @@ pgvector 查询只能出现在 `knowledge/infrastructure`。其他模块通过 `
 架构测试必须扫描 AST 并拒绝：
 
 1. 跨模块导入非 `contracts` 路径。
-2. Domain 导入框架或其他业务模块。
-3. API 导入 Infrastructure。
-4. Application 导入 ORM、FastAPI 或供应商 SDK。
-5. LangGraph、模型 SDK、MCP SDK、pgvector 出现在规定目录之外。
+2. 不在同步依赖白名单中的 Contracts 导入。
+3. Domain 导入框架或其他业务模块。
+4. API 导入 Infrastructure。
+5. Application 导入 ORM、FastAPI 或供应商 SDK。
+6. `processes` 导入任何模块的 Domain、Application、Infrastructure、API 或 Wiring。
+7. LangGraph、模型 SDK、MCP SDK、pgvector 出现在规定目录之外。
 
 CI 必须执行：
 
@@ -394,3 +465,9 @@ AI 在创建或修改代码前必须逐项判断：
 10. 架构检查和完整测试是否通过？
 
 任意一项不满足时，AI 必须先调整设计，不能通过新增 `utils.py`、共享 Session、循环导入、运行时 import 或忽略类型检查绕过规则。
+
+## 13. 采用的成熟模式
+
+- 跨模块一致性使用 [Saga Pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/saga)，每一步是本地事务并定义补偿动作。
+- 事件发布使用 [Transactional Outbox](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html)，消费者必须幂等。
+- 前端目录遵循 [Next.js Project Structure](https://nextjs.org/docs/app/getting-started/project-structure) 的安全共置原则，并额外施加 Feature 公开入口约束。
