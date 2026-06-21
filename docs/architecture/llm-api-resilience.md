@@ -116,6 +116,7 @@ Celery 必须使用不同队列隔离负载：
 ingestion     文档解析，CPU/IO 混合
 embedding     Embedding API 调用
 llm_batch     非交互式模型生成
+events        Transactional Outbox 发布和集成事件消费
 maintenance   清理和统计
 ```
 

@@ -151,7 +151,7 @@ API 必须无状态：
 - `events`：Transactional Outbox 发布和集成事件消费。
 - `maintenance`：清理、统计、Job 对账和失败恢复。
 
-一期使用 1 个 Worker Deployment、Prefork Concurrency 4，并消费四个命名队列。`worker_prefetch_multiplier=1`。
+一期使用 1 个 Worker Deployment、Prefork Concurrency 4，并消费五个命名队列。`worker_prefetch_multiplier=1`。
 
 Worker 不负责：
 

@@ -24,6 +24,7 @@ dependencies = [
     "pydantic-settings>=2.12,<3",
     "redis>=6.4,<6.5",
     "sqlalchemy[asyncio]>=2.0,<3",
+    "uuid6>=2025.0,<2026",
 ]
 
 [dependency-groups]
