@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from hify.modules.identity.api.dependencies import DevelopmentTeamIdHeader, DevelopmentUserIdHeader
+from hify.modules.identity.api.dependencies import RequestAuthenticator
 from hify.modules.identity.api.schemas import (
     ActorContextResponse,
     AddTeamMemberRequest,
@@ -20,10 +20,6 @@ from hify.modules.identity.application.commands.add_team_member import (
 )
 from hify.modules.identity.application.commands.create_team import CreateTeamCommand, CreateTeamHandler
 from hify.modules.identity.application.commands.create_user import CreateUserCommand, CreateUserHandler
-from hify.modules.identity.application.queries.get_actor_context import (
-    GetActorContextHandler,
-    GetActorContextQuery,
-)
 from hify.modules.identity.contracts.dto import ActorContext
 from hify.shared.domain.errors import ConflictError, HifyError, NotFoundError, PermissionDeniedError
 
@@ -33,34 +29,13 @@ def create_identity_router(
     create_user_handler: CreateUserHandler,
     create_team_handler: CreateTeamHandler,
     add_team_member_handler: AddTeamMemberHandler,
-    get_actor_context_handler: GetActorContextHandler,
-    allow_development_header_auth: bool = False,
+    request_authenticator: RequestAuthenticator,
 ) -> APIRouter:
     router = APIRouter(prefix="/identity", tags=["identity"])
 
-    async def get_current_actor(
-        header_user_id: DevelopmentUserIdHeader = None,
-        header_team_id: DevelopmentTeamIdHeader = None,
-    ) -> ActorContext:
-        if not allow_development_header_auth:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={
-                    "code": "AUTHENTICATION_NOT_CONFIGURED",
-                    "message": "authentication is not configured for this API",
-                },
-            )
-        if header_user_id is None or header_team_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={
-                    "code": "AUTHENTICATION_REQUIRED",
-                    "message": "development header authentication requires user and team headers",
-                },
-            )
+    async def get_current_actor(request: Request) -> ActorContext:
         try:
-            query = GetActorContextQuery(user_id=header_user_id, team_id=header_team_id)
-            return await get_actor_context_handler.handle(query)
+            return await request_authenticator.authenticate(request)
         except HifyError as exc:
             raise _to_http_error(exc) from exc
 

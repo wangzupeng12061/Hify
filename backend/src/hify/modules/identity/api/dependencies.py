@@ -1,10 +1,22 @@
 from __future__ import annotations
 
-from typing import Annotated
-from uuid import UUID
+from typing import Protocol
 
-from fastapi import Header
+from fastapi import HTTPException, Request, status
+
+from hify.modules.identity.contracts.dto import ActorContext
 
 
-DevelopmentUserIdHeader = Annotated[UUID | None, Header(alias="X-Hify-User-Id")]
-DevelopmentTeamIdHeader = Annotated[UUID | None, Header(alias="X-Hify-Team-Id")]
+class RequestAuthenticator(Protocol):
+    async def authenticate(self, request: Request) -> ActorContext: ...
+
+
+class AuthenticationNotConfiguredAuthenticator:
+    async def authenticate(self, request: Request) -> ActorContext:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "AUTHENTICATION_NOT_CONFIGURED",
+                "message": "authentication is not configured for this API",
+            },
+        )
