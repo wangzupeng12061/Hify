@@ -1,0 +1,24 @@
+from __future__ import annotations
+
+from typing import Protocol
+from uuid import UUID
+
+from hify.modules.agents.domain.entities import Agent, AgentVersion
+
+
+class AgentRepository(Protocol):
+    async def add(self, agent: Agent) -> None: ...
+
+    async def save(self, agent: Agent) -> None: ...
+
+    async def get_by_id(self, agent_id: UUID) -> Agent | None: ...
+
+    async def get_by_team_and_name(self, *, team_id: UUID, name: str) -> Agent | None: ...
+
+
+class AgentVersionRepository(Protocol):
+    async def add(self, agent_version: AgentVersion) -> None: ...
+
+    async def get_by_id(self, agent_version_id: UUID) -> AgentVersion | None: ...
+
+    async def get_latest_by_agent_id(self, agent_id: UUID) -> AgentVersion | None: ...
