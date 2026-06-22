@@ -9,6 +9,8 @@ import pytest
 
 from collections.abc import AsyncIterator
 
+from decimal import Decimal
+
 from hify.modules.agents.contracts.dto import AgentVersionInfo
 from hify.modules.conversations.contracts.dto import (
     ConversationInfo,
@@ -51,6 +53,8 @@ from hify.modules.runs.domain.errors import RunPermissionDeniedError
 from hify.modules.runs.domain.value_objects import RunEventType
 from hify.modules.tools.contracts.dto import ToolExecutionRequest, ToolExecutionResult
 from hify.modules.tools.contracts.errors import ToolExecutionHttpError
+from hify.modules.usage.contracts.dto import UsageRecordInfo
+from hify.modules.usage.contracts.errors import UsageContractError
 from hify.shared.domain.clock import Clock
 
 
@@ -113,6 +117,53 @@ class RecordingConversationWriter:
             role="assistant",
             content=content,
             status="created",
+            created_at=datetime(2026, 6, 22, tzinfo=UTC),
+        )
+
+
+class RecordingUsageRecorder:
+    def __init__(self, error: UsageContractError | None = None) -> None:
+        self.error = error
+        self.requests: list[tuple[UUID, UUID, UUID, int, int, str]] = []
+
+    async def record_model_usage(
+        self,
+        *,
+        team_id: UUID,
+        user_id: UUID,
+        run_id: UUID,
+        agent_id: UUID,
+        agent_version_id: UUID,
+        provider_model_id: UUID,
+        provider: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cost_amount: Decimal,
+        idempotency_key: str,
+        occurred_at: datetime,
+    ) -> UsageRecordInfo:
+        self.requests.append(
+            (team_id, user_id, run_id, input_tokens, output_tokens, idempotency_key)
+        )
+        if self.error is not None:
+            raise self.error
+        return UsageRecordInfo(
+            id=UUID("00000000-0000-7000-8000-000000000098"),
+            team_id=team_id,
+            user_id=user_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            agent_version_id=agent_version_id,
+            provider_model_id=provider_model_id,
+            provider=provider,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            cost_amount=cost_amount,
+            idempotency_key=idempotency_key,
+            occurred_at=occurred_at,
             created_at=datetime(2026, 6, 22, tzinfo=UTC),
         )
 
@@ -685,6 +736,7 @@ async def test_run_executor_streams_model_chunks_into_run_events() -> None:
         )
     )
     conversation_writer = RecordingConversationWriter()
+    usage_recorder = RecordingUsageRecorder()
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation, (message,)),
@@ -693,6 +745,7 @@ async def test_run_executor_streams_model_chunks_into_run_events() -> None:
         gateway,
         RecordingToolExecutor(),
         RecordingKnowledgeRetriever(),
+        usage_recorder,
         FixedClock(),
     )
 
@@ -707,6 +760,16 @@ async def test_run_executor_streams_model_chunks_into_run_events() -> None:
     assert result.status == "succeeded"
     assert conversation_writer.requests == [
         (actor.team_id, conversation.id, "Hi", run.id, actor.user_id)
+    ]
+    assert usage_recorder.requests == [
+        (
+            actor.team_id,
+            actor.user_id,
+            run.id,
+            1,
+            1,
+            f"run:{run.id}:step:{steps[0].id}:usage:1",
+        )
     ]
     assert gateway.requests[0].messages[0].content == "Hello"
     assert gateway.requests[0].system_prompt == "You are helpful."
@@ -746,6 +809,7 @@ async def test_run_executor_records_diagnostic_when_conversation_write_fails() -
         gateway,
         RecordingToolExecutor(),
         RecordingKnowledgeRetriever(),
+        RecordingUsageRecorder(),
         FixedClock(),
     )
 
@@ -784,6 +848,7 @@ async def test_run_executor_executes_linear_workflow_runtime() -> None:
     )
     tool_executor = RecordingToolExecutor()
     conversation_writer = RecordingConversationWriter()
+    usage_recorder = RecordingUsageRecorder()
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
@@ -792,6 +857,7 @@ async def test_run_executor_executes_linear_workflow_runtime() -> None:
         gateway,
         tool_executor,
         RecordingKnowledgeRetriever(),
+        usage_recorder,
         FixedClock(),
     )
 
@@ -812,6 +878,7 @@ async def test_run_executor_executes_linear_workflow_runtime() -> None:
     assert conversation_writer.requests == [
         (actor.team_id, conversation.id, "Workflow response", run.id, actor.user_id)
     ]
+    assert usage_recorder.requests == []
     assert len(gateway.requests) == 1
     assert gateway.requests[0].model_id == agent_version.provider_model_id
     assert gateway.requests[0].system_prompt == "You are helpful."
@@ -844,6 +911,7 @@ async def test_run_executor_rejects_unsupported_workflow_definition() -> None:
         RecordingModelGateway(()),
         RecordingToolExecutor(),
         RecordingKnowledgeRetriever(),
+        RecordingUsageRecorder(),
         FixedClock(),
     )
 
@@ -868,6 +936,7 @@ async def test_run_executor_marks_workflow_run_failed_when_tool_node_fails() -> 
         RecordingModelGateway((DoneChunk(chunk_type="done", finish_reason="stop"),)),
         RecordingToolExecutor(ToolExecutionHttpError("tool failed")),
         RecordingKnowledgeRetriever(),
+        RecordingUsageRecorder(),
         FixedClock(),
     )
 
@@ -893,6 +962,7 @@ async def test_run_executor_marks_run_failed_on_provider_error() -> None:
         RecordingModelGateway((), ProviderUnavailableError("model unavailable")),
         RecordingToolExecutor(),
         RecordingKnowledgeRetriever(),
+        RecordingUsageRecorder(),
         FixedClock(),
     )
 
@@ -920,6 +990,7 @@ async def test_run_executor_marks_run_interrupted_after_stream_interruption() ->
         ),
         RecordingToolExecutor(),
         RecordingKnowledgeRetriever(),
+        RecordingUsageRecorder(),
         FixedClock(),
     )
 
@@ -993,6 +1064,7 @@ async def test_run_executor_retrieves_knowledge_and_injects_context() -> None:
         gateway,
         RecordingToolExecutor(),
         retriever,
+        RecordingUsageRecorder(),
         FixedClock(),
     )
 
@@ -1039,6 +1111,7 @@ async def test_run_executor_executes_tool_calls_and_continues_model_loop() -> No
     )
     tool_executor = RecordingToolExecutor()
     conversation_writer = RecordingConversationWriter()
+    usage_recorder = RecordingUsageRecorder()
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
@@ -1047,6 +1120,7 @@ async def test_run_executor_executes_tool_calls_and_continues_model_loop() -> No
         gateway,
         tool_executor,
         RecordingKnowledgeRetriever(),
+        usage_recorder,
         FixedClock(),
     )
 
@@ -1062,6 +1136,7 @@ async def test_run_executor_executes_tool_calls_and_continues_model_loop() -> No
     assert conversation_writer.requests == [
         (actor.team_id, conversation.id, "Done", run.id, actor.user_id)
     ]
+    assert usage_recorder.requests == []
     assert tool_executor.requests[0] == ToolExecutionRequest(
         team_id=actor.team_id,
         tool_id=tool_id,
@@ -1101,6 +1176,7 @@ async def test_run_executor_marks_run_failed_when_tool_fails() -> None:
         gateway,
         RecordingToolExecutor(ToolExecutionHttpError("tool failed")),
         RecordingKnowledgeRetriever(),
+        RecordingUsageRecorder(),
         FixedClock(),
     )
 
@@ -1147,6 +1223,7 @@ async def test_run_executor_enforces_max_tool_iterations() -> None:
         gateway,
         RecordingToolExecutor(),
         RecordingKnowledgeRetriever(),
+        RecordingUsageRecorder(),
         FixedClock(),
         max_tool_iterations=1,
     )

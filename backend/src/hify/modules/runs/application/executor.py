@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from asyncio import CancelledError
 from dataclasses import dataclass
+from decimal import Decimal
 import json
 from time import monotonic
 from typing import Literal, Mapping, cast
@@ -41,6 +42,7 @@ from hify.modules.runs.domain.errors import RunNotFoundError, RunStateConflictEr
 from hify.modules.runs.domain.value_objects import RunEventType, RunStatus, RunStepType
 from hify.modules.tools.contracts.dto import ToolExecutionRequest
 from hify.modules.tools.contracts.services import ToolExecutor
+from hify.modules.usage.contracts.services import UsageRecorder
 from hify.shared.domain.clock import Clock
 from hify.shared.domain.errors import HifyError
 from hify.shared.domain.ids import new_uuid
@@ -142,6 +144,7 @@ class RunExecutor:
         model_gateway: ModelGateway,
         tool_executor: ToolExecutor,
         knowledge_retriever: KnowledgeRetriever,
+        usage_recorder: UsageRecorder,
         clock: Clock,
         *,
         run_timeout_seconds: int = 600,
@@ -154,6 +157,7 @@ class RunExecutor:
         self._model_gateway = model_gateway
         self._tool_executor = tool_executor
         self._knowledge_retriever = knowledge_retriever
+        self._usage_recorder = usage_recorder
         self._clock = clock
         self._run_timeout_seconds = run_timeout_seconds
         self._max_tool_iterations = max_tool_iterations
@@ -204,7 +208,14 @@ class RunExecutor:
                     messages=tuple(messages),
                     system_prompt=system_prompt,
                 )
-                stream_result = await self._stream_model_request(run.id, request, context, cancellation)
+                stream_result = await self._stream_model_request(
+                    run=run,
+                    agent_version=agent_version,
+                    step_id=step.id,
+                    request=request,
+                    context=context,
+                    cancellation=cancellation,
+                )
                 if stream_result.finish_reason != "tool_calls" or not stream_result.tool_calls:
                     return await self._mark_run_succeeded_with_output(
                         run=run,
@@ -307,10 +318,12 @@ class RunExecutor:
                         system_prompt=system_prompt,
                     )
                     stream_result = await self._stream_model_request(
-                        run.id,
-                        request,
-                        context,
-                        cancellation,
+                        run=run,
+                        agent_version=agent_version,
+                        step_id=current_step.id,
+                        request=request,
+                        context=context,
+                        cancellation=cancellation,
                     )
                     if stream_result.tool_calls:
                         return await self._mark_run_failed(
@@ -599,7 +612,10 @@ class RunExecutor:
 
     async def _stream_model_request(
         self,
-        run_id: UUID,
+        *,
+        run: AgentRun,
+        agent_version: AgentVersionInfo,
+        step_id: UUID,
         request: ModelRequest,
         context: CallContext,
         cancellation: RunCancellationToken,
@@ -607,10 +623,11 @@ class RunExecutor:
         tool_calls: dict[str, PendingToolCall] = {}
         output_text_parts: list[str] = []
         finish_reason: str | None = None
+        usage_chunk_count = 0
 
         async for chunk in self._model_gateway.stream(request, context):
             cancellation.raise_if_cancelled()
-            await self._record_chunk(run_id, chunk)
+            await self._record_chunk(run.id, chunk)
             if isinstance(chunk, TextDeltaChunk):
                 output_text_parts.append(chunk.text)
             elif isinstance(chunk, ToolCallDeltaChunk):
@@ -619,6 +636,15 @@ class RunExecutor:
                     tool_call = PendingToolCall(tool_call_id=chunk.tool_call_id, name=chunk.name)
                     tool_calls[chunk.tool_call_id] = tool_call
                 tool_call.append_arguments(chunk.arguments_delta)
+            elif isinstance(chunk, UsageChunk):
+                usage_chunk_count += 1
+                await self._record_model_usage(
+                    run=run,
+                    agent_version=agent_version,
+                    step_id=step_id,
+                    usage_index=usage_chunk_count,
+                    chunk=chunk,
+                )
             elif isinstance(chunk, DoneChunk):
                 finish_reason = chunk.finish_reason
 
@@ -627,6 +653,57 @@ class RunExecutor:
             tool_calls=tuple(tool_calls.values()),
             output_text="".join(output_text_parts),
         )
+
+    async def _record_model_usage(
+        self,
+        *,
+        run: AgentRun,
+        agent_version: AgentVersionInfo,
+        step_id: UUID,
+        usage_index: int,
+        chunk: UsageChunk,
+    ) -> None:
+        try:
+            await self._usage_recorder.record_model_usage(
+                team_id=run.team_id,
+                user_id=run.created_by,
+                run_id=run.id,
+                agent_id=run.agent_id,
+                agent_version_id=run.agent_version_id,
+                provider_model_id=agent_version.provider_model_id,
+                provider=agent_version.provider_type,
+                model=agent_version.model_name,
+                input_tokens=chunk.usage.input_tokens,
+                output_tokens=chunk.usage.output_tokens,
+                cost_amount=Decimal("0"),
+                idempotency_key=f"run:{run.id}:step:{step_id}:usage:{usage_index}",
+                occurred_at=self._clock.now(),
+            )
+        except HifyError as exc:
+            await self._record_usage_write_failed(run.id, step_id, exc)
+
+    async def _record_usage_write_failed(
+        self,
+        run_id: UUID,
+        step_id: UUID,
+        error: HifyError,
+    ) -> None:
+        now = self._clock.now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            run = await _require_run(unit_of_work, run_id)
+            event = run.create_event(
+                event_type=RunEventType.DIAGNOSTIC,
+                payload={
+                    "chunk_type": "usage_write_failed",
+                    "step_id": str(step_id),
+                    "error_code": error.code,
+                    "message": error.message,
+                },
+                now=now,
+            )
+            await unit_of_work.runs.save(run)
+            await unit_of_work.events.add(event)
+            await unit_of_work.commit()
 
     async def _execute_tool_calls(
         self,

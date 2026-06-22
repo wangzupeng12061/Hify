@@ -122,8 +122,8 @@ dependency.
 | `workflows` | `identity`, `providers`, `tools` |
 | `agents` | `identity`, `providers`, `knowledge`, `workflows`, `tools` |
 | `conversations` | `identity`, `agents` |
-| `runs` | `identity`, `agents`, `conversations`, `providers`, `knowledge`, `workflows`, `tools` |
-| `usage` | `identity`; writes from other modules arrive through events |
+| `runs` | `identity`, `agents`, `conversations`, `providers`, `knowledge`, `workflows`, `tools`, `usage` |
+| `usage` | `identity`; `runs` may write model usage only through idempotent `usage.contracts` calls |
 
 `hify.processes` may call multiple module contracts but owns no module tables.
 Event consumers may import the publishing module's event

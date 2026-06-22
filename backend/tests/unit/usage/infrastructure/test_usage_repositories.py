@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+from typing import Any, cast
+from uuid import UUID
+
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from hify.modules.usage.infrastructure.database.models import UsageRecordModel
+from hify.modules.usage.infrastructure.database.repositories import SqlAlchemyUsageRecordRepository
+
+
+class SessionSpy:
+    def __init__(self) -> None:
+        self.statement: Any | None = None
+
+    async def execute(self, statement: Any) -> "ResultSpy":
+        self.statement = statement
+        return ResultSpy()
+
+
+class ResultSpy:
+    def one(self) -> tuple[int, int, int, str]:
+        return (0, 0, 0, "0")
+
+
+def test_usage_model_has_idempotency_and_summary_indexes() -> None:
+    index_names = {index.name for index in UsageRecordModel.__table__.indexes}
+
+    assert "uq_usage_records__team_idempotency_key" in index_names
+    assert "ix_usage_records__team_occurred_id" in index_names
+    assert "ix_usage_records__team_run_occurred_id" in index_names
+
+
+def test_run_summary_filters_by_team_and_run() -> None:
+    session = SessionSpy()
+    repository = SqlAlchemyUsageRecordRepository(cast(AsyncSession, session))
+
+    _run(
+        repository.summarize_for_run(
+            team_id=UUID("00000000-0000-7000-8000-000000000001"),
+            run_id=UUID("00000000-0000-7000-8000-000000000002"),
+        ),
+        session,
+    )
+
+    sql = _compile_sql(session.statement)
+    assert "usage_records.team_id" in sql
+    assert "usage_records.run_id" in sql
+    assert "sum(usage_records.input_tokens)" in sql
+
+
+def _run(awaitable: Any, session: SessionSpy) -> None:
+    import asyncio
+
+    asyncio.run(awaitable)
+    assert session.statement is not None
+
+
+def _compile_sql(statement: Any) -> str:
+    return str(statement.compile(dialect=postgresql.dialect()))
