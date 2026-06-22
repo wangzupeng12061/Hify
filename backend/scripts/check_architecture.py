@@ -125,7 +125,11 @@ def main() -> int:
 
 def check_module_shape() -> list[Violation]:
     violations: list[Violation] = []
-    actual_modules = {p.name for p in MODULES_ROOT.iterdir() if p.is_dir()}
+    actual_modules = {
+        p.name
+        for p in MODULES_ROOT.iterdir()
+        if p.is_dir() and p.name != "__pycache__"
+    }
 
     for module in sorted(EXPECTED_MODULES - actual_modules):
         violations.append(Violation(MODULES_ROOT, 1, f"missing module directory: {module}"))
@@ -135,7 +139,11 @@ def check_module_shape() -> list[Violation]:
 
     for module in sorted(EXPECTED_MODULES & actual_modules):
         module_root = MODULES_ROOT / module
-        layers = {p.name for p in module_root.iterdir() if p.is_dir()}
+        layers = {
+            p.name
+            for p in module_root.iterdir()
+            if p.is_dir() and p.name != "__pycache__"
+        }
         for layer in sorted(REQUIRED_LAYERS - layers):
             violations.append(Violation(module_root, 1, f"missing layer: {layer}"))
         if not (module_root / "wiring.py").exists():
@@ -232,8 +240,13 @@ def check_import(
     top_level = imported.split(".", 1)[0]
 
     if current_layer == "domain":
-        if imported.startswith("hify.modules") or imported.startswith("hify.bootstrap"):
+        business_import = parse_business_import(imported)
+        if imported.startswith("hify.bootstrap"):
             violations.append(Violation(path, line, "domain must not import business modules"))
+        if business_import is not None:
+            target_module, target_layer = business_import
+            if target_module != current_module or target_layer != "domain":
+                violations.append(Violation(path, line, "domain must not import business modules"))
         if top_level in FRAMEWORK_AND_SDK_IMPORTS:
             violations.append(Violation(path, line, f"domain must not import {top_level}"))
 
@@ -270,6 +283,15 @@ def check_import(
     return violations
 
 
+def parse_business_import(imported: str) -> tuple[str, str | None] | None:
+    parts = imported.split(".")
+    if len(parts) < 3 or parts[0] != "hify" or parts[1] != "modules":
+        return None
+    target_module = parts[2]
+    target_layer = parts[3] if len(parts) >= 4 else None
+    return target_module, target_layer
+
+
 def check_module_import(
     path: Path,
     line: int,
@@ -278,12 +300,11 @@ def check_module_import(
     is_bootstrap: bool,
 ) -> list[Violation]:
     current_module, current_layer, _, is_process = context
-    parts = imported.split(".")
-    if len(parts) < 3:
+    business_import = parse_business_import(imported)
+    if business_import is None:
         return []
 
-    target_module = parts[2]
-    target_layer = parts[3] if len(parts) >= 4 else None
+    target_module, target_layer = business_import
     violations: list[Violation] = []
 
     if target_module == current_module:
