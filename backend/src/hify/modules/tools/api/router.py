@@ -47,6 +47,9 @@ def create_tools_router(
                 endpoint_url=request.endpoint_url,
                 http_method=request.http_method,
                 http_headers=request.http_headers,
+                mcp_server_id=request.mcp_server_id,
+                mcp_tool_id=request.mcp_tool_id,
+                mcp_tool_name=request.mcp_tool_name,
             )
             tool = await create_tool_handler.handle(command)
             return ToolResponse.model_validate(tool)

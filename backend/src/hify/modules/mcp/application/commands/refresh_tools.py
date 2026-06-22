@@ -10,7 +10,7 @@ from hify.modules.mcp.application.ports import McpClient, McpUnitOfWorkFactory
 from hify.modules.mcp.contracts.dto import McpToolInfo
 from hify.modules.mcp.contracts.services import McpToolDiscovery
 from hify.modules.mcp.domain.entities import McpDiscoveredTool
-from hify.modules.mcp.domain.errors import McpServerNotFoundError
+from hify.modules.mcp.domain.errors import McpServerNotFoundError, McpToolNotFoundError
 from hify.shared.domain.clock import Clock
 
 
@@ -88,6 +88,13 @@ class McpToolDiscoveryService(McpToolDiscovery):
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._refresh_tools_handler = refresh_tools_handler
+
+    async def get_tool(self, *, team_id: UUID, tool_id: UUID) -> McpToolInfo:
+        async with self._unit_of_work_factory() as unit_of_work:
+            tool = await unit_of_work.tools.get_by_id(tool_id)
+        if tool is None or tool.team_id != team_id:
+            raise McpToolNotFoundError("mcp tool was not found")
+        return mcp_tool_info_from_domain(tool)
 
     async def list_tools(self, *, team_id: UUID, server_id: UUID) -> tuple[McpToolInfo, ...]:
         async with self._unit_of_work_factory() as unit_of_work:

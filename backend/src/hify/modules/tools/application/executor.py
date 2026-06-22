@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from hify.modules.mcp.contracts.dto import McpToolInvocationRequest
+from hify.modules.mcp.contracts.services import McpToolInvoker
 from hify.modules.tools.application.ports import (
     BuiltinToolInvocation,
     BuiltinToolInvoker,
@@ -25,10 +27,12 @@ class ToolRuntimeExecutor(ToolExecutor):
         unit_of_work_factory: ToolsUnitOfWorkFactory,
         builtin_tool_invoker: BuiltinToolInvoker,
         http_tool_invoker: HttpToolInvoker,
+        mcp_tool_invoker: McpToolInvoker,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._builtin_tool_invoker = builtin_tool_invoker
         self._http_tool_invoker = http_tool_invoker
+        self._mcp_tool_invoker = mcp_tool_invoker
 
     async def execute_tool(self, request: ToolExecutionRequest) -> ToolExecutionResult:
         async with self._unit_of_work_factory() as unit_of_work:
@@ -54,18 +58,36 @@ class ToolRuntimeExecutor(ToolExecutor):
                 )
             )
 
-        if tool.endpoint_url is None or tool.http_method is None:
-            raise ToolValidationError("http tool definition is incomplete")
-        return await self._http_tool_invoker.invoke_http_tool(
-            HttpToolInvocation(
+        if tool.tool_kind is ToolKind.HTTP:
+            if tool.endpoint_url is None or tool.http_method is None:
+                raise ToolValidationError("http tool definition is incomplete")
+            return await self._http_tool_invoker.invoke_http_tool(
+                HttpToolInvocation(
+                    team_id=request.team_id,
+                    tool_id=request.tool_id,
+                    tool_call_id=request.tool_call_id,
+                    endpoint_url=tool.endpoint_url,
+                    http_method=tool.http_method.value,
+                    http_headers=tool.http_headers,
+                    arguments=request.arguments,
+                )
+            )
+
+        if tool.mcp_server_id is None or tool.mcp_tool_id is None:
+            raise ToolValidationError("mcp tool definition is incomplete")
+        result = await self._mcp_tool_invoker.invoke_tool(
+            McpToolInvocationRequest(
                 team_id=request.team_id,
-                tool_id=request.tool_id,
+                server_id=tool.mcp_server_id,
+                tool_id=tool.mcp_tool_id,
                 tool_call_id=request.tool_call_id,
-                endpoint_url=tool.endpoint_url,
-                http_method=tool.http_method.value,
-                http_headers=tool.http_headers,
                 arguments=request.arguments,
             )
+        )
+        return ToolExecutionResult(
+            tool_call_id=result.tool_call_id,
+            content=result.content,
+            metadata=result.metadata,
         )
 
 

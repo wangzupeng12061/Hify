@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from hify.modules.mcp.contracts.services import McpToolDiscovery, McpToolInvoker
 from hify.modules.tools.api.dependencies import AuthenticationNotConfiguredAuthenticator
 from hify.modules.tools.api.router import create_tools_router
 from hify.modules.tools.application.commands.create_tool import CreateToolHandler
@@ -32,6 +33,8 @@ class ToolsModule:
 def create_tools_module(
     session_factory: async_sessionmaker[AsyncSession],
     *,
+    mcp_tool_discovery: McpToolDiscovery,
+    mcp_tool_invoker: McpToolInvoker,
     clock: Clock | None = None,
 ) -> ToolsModule:
     module_clock = clock or SystemClock()
@@ -39,7 +42,11 @@ def create_tools_module(
     def unit_of_work_factory() -> SqlAlchemyToolsUnitOfWork:
         return SqlAlchemyToolsUnitOfWork(session_factory)
 
-    create_tool_handler = CreateToolHandler(unit_of_work_factory, module_clock)
+    create_tool_handler = CreateToolHandler(
+        unit_of_work_factory,
+        module_clock,
+        mcp_tool_discovery,
+    )
     get_tool_handler = GetToolHandler(unit_of_work_factory)
     get_tool_for_actor_handler = GetToolForActorHandler(get_tool_handler)
     list_tools_for_actor_handler = ListToolsForActorHandler(unit_of_work_factory)
@@ -48,6 +55,7 @@ def create_tools_module(
         unit_of_work_factory,
         EmptyBuiltinToolInvoker(),
         HttpxToolInvoker(),
+        mcp_tool_invoker,
     )
     router = create_tools_router(
         create_tool_handler=create_tool_handler,

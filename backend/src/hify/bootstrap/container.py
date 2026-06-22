@@ -62,7 +62,11 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         session_factory,
         agent_catalog=agents.agent_catalog,
     )
-    tools = create_tools_module(session_factory)
+    tools = create_tools_module(
+        session_factory,
+        mcp_tool_discovery=mcp.mcp_tool_discovery,
+        mcp_tool_invoker=mcp.mcp_tool_invoker,
+    )
     runs = create_runs_module(
         session_factory,
         conversation_reader=conversations.conversation_reader,
