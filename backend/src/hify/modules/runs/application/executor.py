@@ -4,7 +4,7 @@ from asyncio import CancelledError
 from dataclasses import dataclass
 import json
 from time import monotonic
-from typing import Literal, cast
+from typing import Literal, Mapping, cast
 from uuid import UUID
 
 from hify.modules.agents.contracts.dto import AgentVersionInfo
@@ -46,6 +46,7 @@ from hify.shared.domain.errors import HifyError
 from hify.shared.domain.ids import new_uuid
 
 MAX_TOOL_ITERATIONS = 5
+WORKFLOW_RUNTIME_UNSUPPORTED_DEFINITION = "WORKFLOW_RUNTIME_UNSUPPORTED_DEFINITION"
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +109,13 @@ class ModelStreamResult:
     output_text: str
 
 
+@dataclass(frozen=True, slots=True)
+class WorkflowRuntimeNode:
+    node_id: str
+    kind: Literal["start", "llm", "tool", "end"]
+    config: Mapping[str, object]
+
+
 class ToolExecutionFailedError(Exception):
     def __init__(self, run: RunInfo) -> None:
         super().__init__("tool execution failed")
@@ -118,6 +126,10 @@ class RetrievalFailedError(Exception):
     def __init__(self, run: RunInfo) -> None:
         super().__init__("knowledge retrieval failed")
         self.run = run
+
+
+class WorkflowRuntimeUnsupportedDefinitionError(Exception):
+    pass
 
 
 class RunExecutor:
@@ -171,6 +183,16 @@ class RunExecutor:
             )
         except RetrievalFailedError as exc:
             return exc.run
+
+        if agent_version.workflow_definition is not None:
+            return await self._execute_workflow(
+                run=run,
+                agent_version=agent_version,
+                messages=tuple(messages),
+                system_prompt=system_prompt,
+                context=context,
+                cancellation=cancellation,
+            )
 
         step = await self._create_step(run.id, RunStepType.LLM_CALL, "Model call", {})
         try:
@@ -230,6 +252,151 @@ class RunExecutor:
             "RUN_TOOL_ITERATION_LIMIT_EXCEEDED",
             "run exceeded maximum tool iterations",
         )
+
+    async def _execute_workflow(
+        self,
+        *,
+        run: AgentRun,
+        agent_version: AgentVersionInfo,
+        messages: tuple[ModelMessage, ...],
+        system_prompt: str,
+        context: CallContext,
+        cancellation: RunCancellationToken,
+    ) -> RunInfo:
+        workflow_step = await self._create_step(
+            run.id,
+            RunStepType.SYSTEM,
+            "Workflow runtime",
+            {
+                "workflow_version_id": (
+                    str(agent_version.workflow_version_id)
+                    if agent_version.workflow_version_id is not None
+                    else None
+                )
+            },
+        )
+        current_step = workflow_step
+        try:
+            workflow_definition = agent_version.workflow_definition
+            if workflow_definition is None:
+                raise WorkflowRuntimeUnsupportedDefinitionError("workflow definition is missing")
+            workflow_path = _linear_workflow_path(workflow_definition)
+            await self._mark_step_succeeded(run.id, workflow_step.id)
+            workflow_messages = list(messages)
+
+            for node in workflow_path:
+                if node.kind in {"start", "end"}:
+                    continue
+                if node.kind == "llm":
+                    current_step = await self._create_step(
+                        run.id,
+                        RunStepType.LLM_CALL,
+                        "Workflow LLM node",
+                        {"workflow_node_id": node.node_id},
+                    )
+                    request = ModelRequest(
+                        model_id=_workflow_node_uuid_config(node, "provider_model_id"),
+                        messages=tuple(workflow_messages),
+                        system_prompt=system_prompt,
+                    )
+                    stream_result = await self._stream_model_request(
+                        run.id,
+                        request,
+                        context,
+                        cancellation,
+                    )
+                    if stream_result.tool_calls:
+                        return await self._mark_run_failed(
+                            run.id,
+                            current_step.id,
+                            WORKFLOW_RUNTIME_UNSUPPORTED_DEFINITION,
+                            "workflow llm nodes must not emit model tool calls",
+                        )
+                    if stream_result.output_text:
+                        workflow_messages.append(
+                            ModelMessage(role="assistant", content=stream_result.output_text)
+                        )
+                    await self._mark_step_succeeded(run.id, current_step.id)
+                    continue
+
+                current_step = await self._create_step(
+                    run.id,
+                    RunStepType.TOOL_CALL,
+                    "Workflow tool node",
+                    {"workflow_node_id": node.node_id},
+                )
+                tool_message = await self._execute_workflow_tool_node(
+                    run_id=run.id,
+                    team_id=run.team_id,
+                    step_id=current_step.id,
+                    node=node,
+                )
+                workflow_messages.append(tool_message)
+
+            end_step = await self._create_step(
+                run.id,
+                RunStepType.SYSTEM,
+                "Workflow end",
+                {},
+            )
+            return await self._mark_run_succeeded(run.id, end_step.id)
+        except WorkflowRuntimeUnsupportedDefinitionError as exc:
+            return await self._mark_run_failed(
+                run.id,
+                current_step.id,
+                WORKFLOW_RUNTIME_UNSUPPORTED_DEFINITION,
+                str(exc),
+            )
+        except CancelledError:
+            cancellation.cancel()
+            await self._mark_run_cancelled(run.id, current_step.id)
+            raise
+        except ProviderStreamInterruptedError as exc:
+            return await self._mark_run_interrupted(run.id, current_step.id, exc)
+        except ProviderCancelledError:
+            return await self._mark_run_cancelled(run.id, current_step.id)
+        except ProviderRuntimeError as exc:
+            return await self._mark_run_failed(run.id, current_step.id, exc.code, exc.message)
+        except ToolExecutionFailedError as exc:
+            return exc.run
+        except Exception:
+            return await self._mark_run_failed(
+                run.id,
+                current_step.id,
+                "RUN_EXECUTION_ERROR",
+                "run execution failed",
+            )
+
+    async def _execute_workflow_tool_node(
+        self,
+        *,
+        run_id: UUID,
+        team_id: UUID,
+        step_id: UUID,
+        node: WorkflowRuntimeNode,
+    ) -> ModelMessage:
+        tool_id = _workflow_node_uuid_config(node, "tool_id")
+        arguments = _workflow_tool_arguments(node)
+        tool_call = PendingToolCall(
+            tool_call_id=str(new_uuid()),
+            name=str(tool_id),
+            arguments_delta=json.dumps(arguments),
+        )
+        try:
+            result = await self._tool_executor.execute_tool(
+                ToolExecutionRequest(
+                    team_id=team_id,
+                    tool_id=tool_id,
+                    tool_call_id=tool_call.execution_id(),
+                    arguments=arguments,
+                )
+            )
+        except HifyError as exc:
+            run = await self._mark_run_failed(run_id, step_id, exc.code, exc.message)
+            raise ToolExecutionFailedError(run) from exc
+
+        await self._record_tool_result(run_id, step_id, tool_call, result.content)
+        return ModelMessage(role="tool", content=result.content)
 
     async def _build_system_prompt(
         self,
@@ -737,3 +904,111 @@ async def _require_step(unit_of_work: RunsUnitOfWork, step_id: UUID) -> RunStep:
     if step is None:
         raise RunNotFoundError("run step was not found")
     return step
+
+
+def _linear_workflow_path(definition: Mapping[str, object]) -> tuple[WorkflowRuntimeNode, ...]:
+    nodes_value = definition.get("nodes")
+    edges_value = definition.get("edges")
+    if not isinstance(nodes_value, list) or not isinstance(edges_value, list):
+        raise WorkflowRuntimeUnsupportedDefinitionError("workflow definition requires nodes and edges")
+
+    nodes: dict[str, WorkflowRuntimeNode] = {}
+    start_node_id: str | None = None
+    end_node_id: str | None = None
+    for node_value in nodes_value:
+        if not isinstance(node_value, dict):
+            raise WorkflowRuntimeUnsupportedDefinitionError("workflow nodes must be objects")
+        node_id_value = node_value.get("id")
+        kind_value = node_value.get("kind")
+        config_value = node_value.get("config", {})
+        if not isinstance(node_id_value, str) or not node_id_value:
+            raise WorkflowRuntimeUnsupportedDefinitionError("workflow nodes require string ids")
+        if node_id_value in nodes:
+            raise WorkflowRuntimeUnsupportedDefinitionError("workflow node ids must be unique")
+        if kind_value not in {"start", "llm", "tool", "end"}:
+            raise WorkflowRuntimeUnsupportedDefinitionError("workflow contains unsupported node kind")
+        if not isinstance(config_value, dict):
+            raise WorkflowRuntimeUnsupportedDefinitionError("workflow node config must be an object")
+        typed_kind = cast(Literal["start", "llm", "tool", "end"], kind_value)
+        nodes[node_id_value] = WorkflowRuntimeNode(
+            node_id=node_id_value,
+            kind=typed_kind,
+            config=cast(Mapping[str, object], config_value),
+        )
+        if typed_kind == "start":
+            if start_node_id is not None:
+                raise WorkflowRuntimeUnsupportedDefinitionError("workflow runtime supports one start node")
+            start_node_id = node_id_value
+        elif typed_kind == "end":
+            if end_node_id is not None:
+                raise WorkflowRuntimeUnsupportedDefinitionError("workflow runtime supports one end node")
+            end_node_id = node_id_value
+
+    if start_node_id is None or end_node_id is None:
+        raise WorkflowRuntimeUnsupportedDefinitionError("workflow requires one start and one end node")
+
+    outgoing: dict[str, list[str]] = {node_id: [] for node_id in nodes}
+    incoming: dict[str, list[str]] = {node_id: [] for node_id in nodes}
+    for edge_value in edges_value:
+        if not isinstance(edge_value, dict):
+            raise WorkflowRuntimeUnsupportedDefinitionError("workflow edges must be objects")
+        source_node_id = edge_value.get("source_node_id")
+        target_node_id = edge_value.get("target_node_id")
+        if not isinstance(source_node_id, str) or not isinstance(target_node_id, str):
+            raise WorkflowRuntimeUnsupportedDefinitionError("workflow edges require source and target")
+        if source_node_id not in nodes or target_node_id not in nodes:
+            raise WorkflowRuntimeUnsupportedDefinitionError("workflow edges must reference known nodes")
+        outgoing[source_node_id].append(target_node_id)
+        incoming[target_node_id].append(source_node_id)
+
+    for node_id, node in nodes.items():
+        if node.kind == "end":
+            if outgoing[node_id]:
+                raise WorkflowRuntimeUnsupportedDefinitionError("end node must not have outgoing edges")
+        elif len(outgoing[node_id]) != 1:
+            raise WorkflowRuntimeUnsupportedDefinitionError("workflow runtime supports single-path flows only")
+        if node.kind == "start":
+            if incoming[node_id]:
+                raise WorkflowRuntimeUnsupportedDefinitionError("start node must not have incoming edges")
+        elif len(incoming[node_id]) != 1:
+            raise WorkflowRuntimeUnsupportedDefinitionError("workflow runtime supports single-path flows only")
+
+    path_ids: list[str] = []
+    visited: set[str] = set()
+    current_node_id = start_node_id
+    while True:
+        if current_node_id in visited:
+            raise WorkflowRuntimeUnsupportedDefinitionError("workflow runtime does not support cycles")
+        visited.add(current_node_id)
+        path_ids.append(current_node_id)
+        if current_node_id == end_node_id:
+            break
+        current_node_id = outgoing[current_node_id][0]
+
+    if visited != set(nodes):
+        raise WorkflowRuntimeUnsupportedDefinitionError("workflow runtime supports one connected path only")
+    path = tuple(nodes[node_id] for node_id in path_ids)
+    if not any(node.kind == "llm" for node in path):
+        raise WorkflowRuntimeUnsupportedDefinitionError("workflow runtime requires at least one llm node")
+    return path
+
+
+def _workflow_node_uuid_config(node: WorkflowRuntimeNode, field_name: str) -> UUID:
+    value = node.config.get(field_name)
+    if not isinstance(value, str):
+        raise WorkflowRuntimeUnsupportedDefinitionError(
+            f"workflow {node.kind} node requires {field_name}"
+        )
+    try:
+        return UUID(value)
+    except ValueError as exc:
+        raise WorkflowRuntimeUnsupportedDefinitionError(
+            f"workflow {node.kind} node {field_name} must be a uuid"
+        ) from exc
+
+
+def _workflow_tool_arguments(node: WorkflowRuntimeNode) -> dict[str, object]:
+    value = node.config.get("arguments", {})
+    if not isinstance(value, dict):
+        raise WorkflowRuntimeUnsupportedDefinitionError("workflow tool arguments must be an object")
+    return cast(dict[str, object], value)
