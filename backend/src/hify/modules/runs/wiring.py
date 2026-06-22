@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hify.modules.agents.contracts.services import AgentCatalog
-from hify.modules.conversations.contracts.services import ConversationReader
+from hify.modules.conversations.contracts.services import ConversationReader, ConversationWriter
 from hify.modules.knowledge.contracts.services import KnowledgeRetriever
 from hify.modules.providers.contracts.services import ModelGateway
 from hify.modules.runs.api.dependencies import AuthenticationNotConfiguredAuthenticator
@@ -37,6 +37,7 @@ def create_runs_module(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     conversation_reader: ConversationReader,
+    conversation_writer: ConversationWriter,
     agent_catalog: AgentCatalog,
     model_gateway: ModelGateway,
     tool_executor: ToolExecutor,
@@ -63,6 +64,7 @@ def create_runs_module(
     run_executor = RunExecutor(
         unit_of_work_factory,
         conversation_reader,
+        conversation_writer,
         agent_catalog,
         model_gateway,
         tool_executor,
