@@ -72,6 +72,16 @@ class SqlAlchemyRunStepRepository:
     async def add(self, step: RunStep) -> None:
         self._session.add(_step_to_model(step))
 
+    async def save(self, step: RunStep) -> None:
+        model = await self._session.get(RunStepModel, step.id)
+        if model is None:
+            self._session.add(_step_to_model(step))
+            return
+        model.status = step.status.value
+        model.completed_at = step.completed_at
+        model.error_code = step.error_code
+        model.error_message = step.error_message
+
     async def get_by_id(self, step_id: UUID) -> RunStep | None:
         model = await self._session.get(RunStepModel, step_id)
         if model is None:
