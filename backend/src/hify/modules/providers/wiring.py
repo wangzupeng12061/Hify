@@ -15,6 +15,8 @@ from hify.modules.providers.application.queries.get_model import (
     ModelCatalogService,
 )
 from hify.modules.providers.contracts.services import ModelCatalog
+from hify.modules.providers.contracts.services import ModelGateway
+from hify.modules.providers.infrastructure.adapters.fake import MissingModelGateway
 from hify.modules.providers.infrastructure.database.uow import SqlAlchemyProvidersUnitOfWork
 from hify.modules.providers.infrastructure.encryption import (
     FernetCredentialEncryptor,
@@ -27,6 +29,7 @@ from hify.shared.domain.clock import Clock, SystemClock
 class ProvidersModule:
     router: APIRouter
     model_catalog: ModelCatalog
+    model_gateway: ModelGateway
 
 
 def create_providers_module(
@@ -55,10 +58,15 @@ def create_providers_module(
     get_model_handler = GetModelHandler(unit_of_work_factory)
     list_models_handler = ListModelsHandler(unit_of_work_factory)
     model_catalog = ModelCatalogService(get_model_handler, list_models_handler)
+    model_gateway = MissingModelGateway()
 
     router = create_providers_router(
         create_provider_handler=create_provider_handler,
         add_provider_model_handler=add_provider_model_handler,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),
     )
-    return ProvidersModule(router=router, model_catalog=model_catalog)
+    return ProvidersModule(
+        router=router,
+        model_catalog=model_catalog,
+        model_gateway=model_gateway,
+    )

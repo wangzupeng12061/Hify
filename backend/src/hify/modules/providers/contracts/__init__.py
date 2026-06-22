@@ -1,9 +1,36 @@
-from hify.modules.providers.contracts.dto import CredentialWriteResult, ModelInfo, ProviderInfo
-from hify.modules.providers.contracts.services import ModelCatalog
+from hify.modules.providers.contracts.dto import (
+    CallContext,
+    CredentialWriteResult,
+    DoneChunk,
+    ErrorChunk,
+    ModelChunk,
+    ModelInfo,
+    ModelMessage,
+    ModelRequest,
+    ModelUsage,
+    ProviderInfo,
+    ReasoningDeltaChunk,
+    TextDeltaChunk,
+    ToolCallDeltaChunk,
+    UsageChunk,
+)
+from hify.modules.providers.contracts.services import ModelCatalog, ModelGateway
 
 __all__ = [
+    "CallContext",
     "CredentialWriteResult",
+    "DoneChunk",
+    "ErrorChunk",
+    "ModelChunk",
     "ModelCatalog",
+    "ModelGateway",
     "ModelInfo",
+    "ModelMessage",
+    "ModelRequest",
+    "ModelUsage",
     "ProviderInfo",
+    "ReasoningDeltaChunk",
+    "TextDeltaChunk",
+    "ToolCallDeltaChunk",
+    "UsageChunk",
 ]
