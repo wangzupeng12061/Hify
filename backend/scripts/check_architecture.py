@@ -186,8 +186,9 @@ def check_python_file(path: Path) -> list[Violation]:
             for alias in node.names:
                 violations.extend(check_import(path, node.lineno, alias.name, context))
         elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                violations.extend(check_import(path, node.lineno, node.module, context))
+            imported = resolve_import_from(path, node)
+            if imported:
+                violations.extend(check_import(path, node.lineno, imported, context))
 
     return violations
 
@@ -200,6 +201,24 @@ def module_context(path: Path) -> tuple[str | None, str | None, bool, bool]:
         return parts[1], parts[2], False, False
 
     return None, None, parts[0] == "bootstrap", parts[0] == "processes"
+
+
+def resolve_import_from(path: Path, node: ast.ImportFrom) -> str | None:
+    if node.level == 0:
+        return node.module
+
+    relative = path.relative_to(SRC).with_suffix("")
+    package_parts = list(relative.parts[:-1])
+    if node.level > len(package_parts):
+        return node.module
+
+    base_parts = package_parts[: len(package_parts) - node.level + 1]
+    if node.module:
+        base_parts.extend(node.module.split("."))
+
+    if not base_parts:
+        return None
+    return "hify." + ".".join(base_parts)
 
 
 def check_import(

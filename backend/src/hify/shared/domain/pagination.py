@@ -28,13 +28,10 @@ class PageRequest:
 class Page(Generic[T]):
     items: tuple[T, ...]
     next_cursor: str | None
-
-    @property
-    def has_more(self) -> bool:
-        return self.next_cursor is not None
+    has_more: bool
 
 
-def build_page(items: Sequence[T], request: PageRequest, next_cursor: str | None) -> Page[T]:
+def build_page(items: Sequence[T], request: PageRequest, next_cursor: str | None = None) -> Page[T]:
     if len(items) > request.limit:
-        return Page(items=tuple(items[: request.limit]), next_cursor=next_cursor)
-    return Page(items=tuple(items), next_cursor=None)
+        return Page(items=tuple(items[: request.limit]), next_cursor=next_cursor, has_more=True)
+    return Page(items=tuple(items), next_cursor=None, has_more=False)

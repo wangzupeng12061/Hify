@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, DateTime, Index, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -15,9 +15,18 @@ from hify.shared.infrastructure.database import Base
 
 class OutboxMessageModel(Base):
     __tablename__ = "platform_outbox"
+    __table_args__ = (
+        UniqueConstraint("event_id", name="uq_platform_outbox__event_id"),
+        Index(
+            "ix_platform_outbox__pending_next_attempt",
+            "next_attempt_at",
+            "id",
+            postgresql_where=text("published_at IS NULL"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=new_uuid)
-    event_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, unique=True)
+    event_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
     payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

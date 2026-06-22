@@ -25,6 +25,14 @@ def test_build_page_trims_extra_item_and_sets_next_cursor() -> None:
     assert page.has_more
 
 
+def test_build_page_marks_has_more_when_extra_item_exists_without_cursor() -> None:
+    page = build_page([1, 2, 3], PageRequest(limit=2))
+
+    assert page.items == (1, 2)
+    assert page.next_cursor is None
+    assert page.has_more
+
+
 def test_build_page_without_extra_item_has_no_next_cursor() -> None:
     page = build_page([1, 2], PageRequest(limit=2), "next")
 
