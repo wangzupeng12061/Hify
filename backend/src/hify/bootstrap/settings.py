@@ -8,3 +8,5 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://hify:hify@localhost:5432/hify"
     database_echo: bool = False
+    provider_credential_encryption_key: str | None = None
+    provider_credential_key_version: int = 1
