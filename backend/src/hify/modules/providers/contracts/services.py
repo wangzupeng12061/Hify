@@ -4,7 +4,14 @@ from collections.abc import AsyncIterator
 from typing import Protocol
 from uuid import UUID
 
-from hify.modules.providers.contracts.dto import CallContext, ModelChunk, ModelInfo, ModelRequest
+from hify.modules.providers.contracts.dto import (
+    CallContext,
+    EmbeddingRequest,
+    EmbeddingResult,
+    ModelChunk,
+    ModelInfo,
+    ModelRequest,
+)
 
 
 class ModelCatalog(Protocol):
@@ -19,3 +26,7 @@ class ModelGateway(Protocol):
         request: ModelRequest,
         context: CallContext,
     ) -> AsyncIterator[ModelChunk]: ...
+
+
+class EmbeddingGateway(Protocol):
+    async def embed(self, request: EmbeddingRequest, context: CallContext) -> EmbeddingResult: ...
