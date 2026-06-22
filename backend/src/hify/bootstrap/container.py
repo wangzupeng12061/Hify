@@ -10,6 +10,7 @@ from hify.modules.conversations.wiring import ConversationsModule, create_conver
 from hify.modules.identity.wiring import IdentityModule, create_identity_module
 from hify.modules.providers.wiring import ProvidersModule, create_providers_module
 from hify.modules.runs.wiring import RunsModule, create_runs_module
+from hify.modules.tools.wiring import ToolsModule, create_tools_module
 from hify.shared.infrastructure.database import create_engine, create_session_factory
 
 
@@ -23,6 +24,7 @@ class HifyContainer:
     agents: AgentsModule
     conversations: ConversationsModule
     runs: RunsModule
+    tools: ToolsModule
 
 
 def create_container(settings: Settings | None = None) -> HifyContainer:
@@ -49,6 +51,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         agent_catalog=agents.agent_catalog,
         model_gateway=providers.model_gateway,
     )
+    tools = create_tools_module(session_factory)
     return HifyContainer(
         settings=resolved_settings,
         engine=engine,
@@ -58,4 +61,5 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         agents=agents,
         conversations=conversations,
         runs=runs,
+        tools=tools,
     )

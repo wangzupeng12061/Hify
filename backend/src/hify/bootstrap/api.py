@@ -18,6 +18,7 @@ def create_app(container: HifyContainer | None = None) -> FastAPI:
     app.include_router(resolved_container.agents.router)
     app.include_router(resolved_container.conversations.router)
     app.include_router(resolved_container.runs.router)
+    app.include_router(resolved_container.tools.router)
     return app
 
 
