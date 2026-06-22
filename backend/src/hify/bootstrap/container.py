@@ -8,6 +8,7 @@ from hify.bootstrap.settings import Settings
 from hify.modules.agents.wiring import AgentsModule, create_agents_module
 from hify.modules.conversations.wiring import ConversationsModule, create_conversations_module
 from hify.modules.identity.wiring import IdentityModule, create_identity_module
+from hify.modules.jobs.wiring import JobsModule, create_jobs_module
 from hify.modules.knowledge.wiring import KnowledgeModule, create_knowledge_module
 from hify.modules.providers.wiring import ProvidersModule, create_providers_module
 from hify.modules.runs.wiring import RunsModule, create_runs_module
@@ -24,6 +25,7 @@ class HifyContainer:
     providers: ProvidersModule
     agents: AgentsModule
     conversations: ConversationsModule
+    jobs: JobsModule
     knowledge: KnowledgeModule
     runs: RunsModule
     tools: ToolsModule
@@ -42,6 +44,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         credential_encryption_key=resolved_settings.provider_credential_encryption_key,
         credential_key_version=resolved_settings.provider_credential_key_version,
     )
+    jobs = create_jobs_module(session_factory)
     knowledge = create_knowledge_module(
         session_factory,
         model_catalog=providers.model_catalog,
@@ -73,6 +76,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         providers=providers,
         agents=agents,
         conversations=conversations,
+        jobs=jobs,
         knowledge=knowledge,
         runs=runs,
         tools=tools,
