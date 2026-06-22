@@ -11,6 +11,7 @@ from hify.modules.agents.domain.value_objects import (
     ModelBindingSnapshot,
     normalize_agent_description,
     normalize_agent_name,
+    normalize_knowledge_base_ids,
     normalize_system_prompt,
 )
 
@@ -23,6 +24,7 @@ class Agent:
     description: str | None
     system_prompt: str
     provider_model_id: UUID
+    knowledge_base_ids: tuple[UUID, ...]
     status: AgentStatus
     latest_version_number: int
     version: int
@@ -39,6 +41,7 @@ class Agent:
         description: str | None,
         system_prompt: str,
         provider_model_id: UUID,
+        knowledge_base_ids: tuple[UUID, ...],
         created_by: UUID,
         now: datetime,
     ) -> Agent:
@@ -49,6 +52,7 @@ class Agent:
             description=normalize_agent_description(description),
             system_prompt=normalize_system_prompt(system_prompt),
             provider_model_id=provider_model_id,
+            knowledge_base_ids=normalize_knowledge_base_ids(knowledge_base_ids),
             status=AgentStatus.DRAFT,
             latest_version_number=0,
             version=0,
@@ -75,6 +79,7 @@ class Agent:
             name=self.name,
             description=self.description,
             system_prompt=self.system_prompt,
+            knowledge_base_ids=self.knowledge_base_ids,
             model_snapshot=model_snapshot,
             published_by=published_by,
             now=now,
@@ -94,6 +99,7 @@ class AgentVersion:
     name: str
     description: str | None
     system_prompt: str
+    knowledge_base_ids: tuple[UUID, ...]
     provider_model_id: UUID
     provider_type: str
     provider_name: str
@@ -116,6 +122,7 @@ class AgentVersion:
         name: str,
         description: str | None,
         system_prompt: str,
+        knowledge_base_ids: tuple[UUID, ...],
         model_snapshot: ModelBindingSnapshot,
         published_by: UUID,
         now: datetime,
@@ -128,6 +135,7 @@ class AgentVersion:
             name=normalize_agent_name(name),
             description=normalize_agent_description(description),
             system_prompt=normalize_system_prompt(system_prompt),
+            knowledge_base_ids=normalize_knowledge_base_ids(knowledge_base_ids),
             provider_model_id=model_snapshot.provider_model_id,
             provider_type=model_snapshot.provider_type,
             provider_name=model_snapshot.provider_name,

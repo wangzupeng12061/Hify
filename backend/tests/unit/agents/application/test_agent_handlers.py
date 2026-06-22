@@ -21,6 +21,7 @@ from hify.modules.agents.domain.errors import (
     AgentValidationError,
 )
 from hify.modules.identity.contracts.dto import ActorContext
+from hify.modules.knowledge.contracts.dto import KnowledgeBaseInfo
 from hify.modules.providers.contracts.dto import ModelInfo
 from hify.shared.domain.clock import Clock
 
@@ -42,6 +43,32 @@ class FakeModelCatalog:
     async def list_models(self, *, team_id: UUID) -> tuple[ModelInfo, ...]:
         assert team_id == self.model.team_id
         return (self.model,)
+
+
+class FakeKnowledgeBaseCatalog:
+    def __init__(self) -> None:
+        self.requests: list[tuple[UUID, UUID]] = []
+
+    async def get_knowledge_base(
+        self,
+        *,
+        team_id: UUID,
+        knowledge_base_id: UUID,
+    ) -> KnowledgeBaseInfo:
+        self.requests.append((team_id, knowledge_base_id))
+        return KnowledgeBaseInfo(
+            id=knowledge_base_id,
+            team_id=team_id,
+            name="Team Docs",
+            description=None,
+            status="active",
+            embedding_model_id=UUID("00000000-0000-7000-8000-000000000090"),
+            embedding_dimensions=1536,
+            document_count=1,
+            chunk_count=3,
+            created_at=datetime(2026, 6, 22, tzinfo=UTC),
+            updated_at=datetime(2026, 6, 22, tzinfo=UTC),
+        )
 
 
 class FakeAgentRepository:
@@ -142,6 +169,7 @@ async def test_create_agent_validates_model_and_rejects_duplicate_name() -> None
     handler = CreateAgentHandler(
         lambda: unit_of_work,
         FakeModelCatalog(active_chat_model(actor.team_id)),
+        FakeKnowledgeBaseCatalog(),
         FixedClock(),
     )
     command = CreateAgentCommand(
@@ -150,11 +178,13 @@ async def test_create_agent_validates_model_and_rejects_duplicate_name() -> None
         description="Answers questions",
         system_prompt="You are helpful.",
         provider_model_id=UUID("00000000-0000-7000-8000-000000000004"),
+        knowledge_base_ids=(UUID("00000000-0000-7000-8000-000000000099"),),
     )
 
     agent = await handler.handle(command)
 
     assert agent.name == "Support Bot"
+    assert agent.knowledge_base_ids == (UUID("00000000-0000-7000-8000-000000000099"),)
     assert unit_of_work.committed
     with pytest.raises(AgentAlreadyExistsError):
         await handler.handle(command)
@@ -173,6 +203,7 @@ async def test_create_agent_requires_permission() -> None:
     handler = CreateAgentHandler(
         lambda: unit_of_work,
         FakeModelCatalog(active_chat_model(actor.team_id)),
+        FakeKnowledgeBaseCatalog(),
         FixedClock(),
     )
 
@@ -208,7 +239,12 @@ async def test_create_agent_rejects_non_chat_model() -> None:
         supports_vision=False,
         supports_structured_output=False,
     )
-    handler = CreateAgentHandler(lambda: unit_of_work, FakeModelCatalog(embedding_model), FixedClock())
+    handler = CreateAgentHandler(
+        lambda: unit_of_work,
+        FakeModelCatalog(embedding_model),
+        FakeKnowledgeBaseCatalog(),
+        FixedClock(),
+    )
 
     with pytest.raises(AgentValidationError, match="chat"):
         await handler.handle(
@@ -227,7 +263,14 @@ async def test_publish_agent_creates_version_and_catalog_returns_it() -> None:
     unit_of_work = FakeAgentsUnitOfWork()
     actor = actor_with_agent_permission()
     model_catalog = FakeModelCatalog(active_chat_model(actor.team_id))
-    create_handler = CreateAgentHandler(lambda: unit_of_work, model_catalog, FixedClock())
+    knowledge_base_catalog = FakeKnowledgeBaseCatalog()
+    knowledge_base_id = UUID("00000000-0000-7000-8000-000000000099")
+    create_handler = CreateAgentHandler(
+        lambda: unit_of_work,
+        model_catalog,
+        knowledge_base_catalog,
+        FixedClock(),
+    )
     agent = await create_handler.handle(
         CreateAgentCommand(
             actor=actor,
@@ -235,9 +278,15 @@ async def test_publish_agent_creates_version_and_catalog_returns_it() -> None:
             description=None,
             system_prompt="You are helpful.",
             provider_model_id=model_catalog.model.id,
+            knowledge_base_ids=(knowledge_base_id,),
         )
     )
-    publish_handler = PublishAgentHandler(lambda: unit_of_work, model_catalog, FixedClock())
+    publish_handler = PublishAgentHandler(
+        lambda: unit_of_work,
+        model_catalog,
+        knowledge_base_catalog,
+        FixedClock(),
+    )
 
     agent_version = await publish_handler.handle(PublishAgentCommand(actor=actor, agent_id=agent.id))
 
@@ -254,4 +303,9 @@ async def test_publish_agent_creates_version_and_catalog_returns_it() -> None:
     assert persisted_agent is not None
     assert persisted_agent.latest_version_number == 1
     assert agent_version.version_number == 1
+    assert agent_version.knowledge_base_ids == (knowledge_base_id,)
+    assert knowledge_base_catalog.requests == [
+        (actor.team_id, knowledge_base_id),
+        (actor.team_id, knowledge_base_id),
+    ]
     assert latest == fetched == agent_version

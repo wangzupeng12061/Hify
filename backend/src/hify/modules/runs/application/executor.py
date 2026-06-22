@@ -7,10 +7,13 @@ from time import monotonic
 from typing import Literal, cast
 from uuid import UUID
 
+from hify.modules.agents.contracts.dto import AgentVersionInfo
 from hify.modules.agents.contracts.services import AgentCatalog
 from hify.modules.conversations.contracts.dto import ConversationMessageInfo
 from hify.modules.conversations.contracts.services import ConversationReader
 from hify.modules.identity.contracts.dto import ActorContext
+from hify.modules.knowledge.contracts.dto import RetrievedChunk
+from hify.modules.knowledge.contracts.services import KnowledgeRetriever
 from hify.modules.providers.contracts.dto import (
     CallContext,
     DoneChunk,
@@ -111,6 +114,12 @@ class ToolExecutionFailedError(Exception):
         self.run = run
 
 
+class RetrievalFailedError(Exception):
+    def __init__(self, run: RunInfo) -> None:
+        super().__init__("knowledge retrieval failed")
+        self.run = run
+
+
 class RunExecutor:
     def __init__(
         self,
@@ -119,6 +128,7 @@ class RunExecutor:
         agent_catalog: AgentCatalog,
         model_gateway: ModelGateway,
         tool_executor: ToolExecutor,
+        knowledge_retriever: KnowledgeRetriever,
         clock: Clock,
         *,
         run_timeout_seconds: int = 600,
@@ -129,13 +139,14 @@ class RunExecutor:
         self._agent_catalog = agent_catalog
         self._model_gateway = model_gateway
         self._tool_executor = tool_executor
+        self._knowledge_retriever = knowledge_retriever
         self._clock = clock
         self._run_timeout_seconds = run_timeout_seconds
         self._max_tool_iterations = max_tool_iterations
 
     async def execute(self, command: ExecuteRunCommand) -> RunInfo:
         cancellation = command.cancellation or RunCancellationToken()
-        run, step = await self._mark_run_started(command.run_id, command.actor)
+        run = await self._mark_run_started(command.run_id, command.actor)
         agent_version = await self._agent_catalog.get_agent_version(
             team_id=run.team_id,
             agent_version_id=run.agent_version_id,
@@ -151,11 +162,22 @@ class RunExecutor:
         )
 
         try:
+            system_prompt = await self._build_system_prompt(
+                run=run,
+                agent_version=agent_version,
+                messages=tuple(messages),
+                context=context,
+            )
+        except RetrievalFailedError as exc:
+            return exc.run
+
+        step = await self._create_step(run.id, RunStepType.LLM_CALL, "Model call", {})
+        try:
             for iteration_index in range(self._max_tool_iterations + 1):
                 request = ModelRequest(
                     model_id=agent_version.provider_model_id,
                     messages=tuple(messages),
-                    system_prompt=agent_version.system_prompt,
+                    system_prompt=system_prompt,
                 )
                 stream_result = await self._stream_model_request(run.id, request, context, cancellation)
                 if stream_result.finish_reason != "tool_calls" or not stream_result.tool_calls:
@@ -191,6 +213,8 @@ class RunExecutor:
             return await self._mark_run_failed(run.id, step.id, exc.code, exc.message)
         except ToolExecutionFailedError as exc:
             return exc.run
+        except RetrievalFailedError as exc:
+            return exc.run
         except Exception:
             return await self._mark_run_failed(
                 run.id,
@@ -205,6 +229,101 @@ class RunExecutor:
             "RUN_TOOL_ITERATION_LIMIT_EXCEEDED",
             "run exceeded maximum tool iterations",
         )
+
+    async def _build_system_prompt(
+        self,
+        *,
+        run: AgentRun,
+        agent_version: AgentVersionInfo,
+        messages: tuple[ModelMessage, ...],
+        context: CallContext,
+    ) -> str:
+        system_prompt = agent_version.system_prompt
+        knowledge_base_ids = agent_version.knowledge_base_ids
+        if not knowledge_base_ids:
+            return system_prompt
+        query = _last_user_message_content(messages)
+        if query is None:
+            return system_prompt
+        chunks = await self._retrieve_knowledge_context(
+            run=run,
+            knowledge_base_ids=knowledge_base_ids,
+            query=query,
+            context=context,
+        )
+        if not chunks:
+            return system_prompt
+        return f"{system_prompt}\n\n{_format_retrieved_context(chunks)}"
+
+    async def _retrieve_knowledge_context(
+        self,
+        *,
+        run: AgentRun,
+        knowledge_base_ids: tuple[UUID, ...],
+        query: str,
+        context: CallContext,
+    ) -> tuple[RetrievedChunk, ...]:
+        step = await self._create_step(
+            run.id,
+            RunStepType.RETRIEVAL,
+            "Knowledge retrieval",
+            {"knowledge_base_ids": [str(item) for item in knowledge_base_ids]},
+        )
+        try:
+            chunks = await self._knowledge_retriever.retrieve(
+                team_id=run.team_id,
+                user_id=run.created_by,
+                knowledge_base_ids=knowledge_base_ids,
+                query=query,
+                limit=5,
+                deadline=context.deadline,
+            )
+        except HifyError as exc:
+            failed_run = await self._mark_run_failed(run.id, step.id, exc.code, exc.message)
+            raise RetrievalFailedError(failed_run) from exc
+        await self._record_retrieval_result(run.id, step.id, chunks)
+        return chunks
+
+    async def _record_retrieval_result(
+        self,
+        run_id: UUID,
+        step_id: UUID,
+        chunks: tuple[RetrievedChunk, ...],
+    ) -> None:
+        now = self._clock.now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            run = await _require_run(unit_of_work, run_id)
+            step = await _require_step(unit_of_work, step_id)
+            result_event = run.create_event(
+                event_type=RunEventType.DIAGNOSTIC,
+                payload={
+                    "chunk_type": "retrieval_result",
+                    "step_id": str(step.id),
+                    "chunk_count": len(chunks),
+                    "chunks": [
+                        {
+                            "chunk_id": str(chunk.chunk_id),
+                            "knowledge_base_id": str(chunk.knowledge_base_id),
+                            "document_id": str(chunk.document_id),
+                            "position": chunk.position,
+                            "score": chunk.score,
+                        }
+                        for chunk in chunks
+                    ],
+                },
+                now=now,
+            )
+            step.mark_succeeded(now)
+            step_succeeded_event = run.create_event(
+                event_type=RunEventType.STEP_SUCCEEDED,
+                payload={"step_id": str(step.id)},
+                now=now,
+            )
+            await unit_of_work.steps.save(step)
+            await unit_of_work.runs.save(run)
+            await unit_of_work.events.add(result_event)
+            await unit_of_work.events.add(step_succeeded_event)
+            await unit_of_work.commit()
 
     async def prepare_execution(self, command: ExecuteRunCommand) -> RunInfo:
         if command.actor is not None:
@@ -224,7 +343,7 @@ class RunExecutor:
         self,
         run_id: UUID,
         actor: ActorContext | None,
-    ) -> tuple[AgentRun, RunStep]:
+    ) -> AgentRun:
         if actor is not None:
             require_execute_runs(actor)
 
@@ -239,22 +358,10 @@ class RunExecutor:
                 payload={"run_id": str(run.id)},
                 now=now,
             )
-            step = run.create_step(
-                step_type=RunStepType.LLM_CALL,
-                name="Model call",
-                now=now,
-            )
-            step_started_event = run.create_event(
-                event_type=RunEventType.STEP_STARTED,
-                payload={"step_id": str(step.id), "step_type": step.step_type.value},
-                now=now,
-            )
             await unit_of_work.runs.save(run)
-            await unit_of_work.steps.add(step)
             await unit_of_work.events.add(run_started_event)
-            await unit_of_work.events.add(step_started_event)
             await unit_of_work.commit()
-        return run, step
+        return run
 
     async def _load_model_messages(self, run: AgentRun) -> tuple[ModelMessage, ...]:
         page = await self._conversation_reader.list_messages(
@@ -522,6 +629,33 @@ def _model_message_from_conversation(message: ConversationMessageInfo) -> ModelM
         role = "user"
     typed_role = cast(Literal["system", "user", "assistant", "tool"], role)
     return ModelMessage(role=typed_role, content=message.content)
+
+
+def _last_user_message_content(messages: tuple[ModelMessage, ...]) -> str | None:
+    for message in reversed(messages):
+        if message.role == "user" and message.content.strip():
+            return message.content
+    return None
+
+
+def _format_retrieved_context(chunks: tuple[RetrievedChunk, ...]) -> str:
+    lines = [
+        "Use the following retrieved knowledge context when it is relevant. "
+        "If the context does not answer the user, say so instead of inventing facts.",
+        "",
+        "<retrieved_context>",
+    ]
+    for index, chunk in enumerate(chunks, start=1):
+        lines.extend(
+            (
+                f"<chunk index=\"{index}\" knowledge_base_id=\"{chunk.knowledge_base_id}\" "
+                f"document_id=\"{chunk.document_id}\" score=\"{chunk.score:.4f}\">",
+                chunk.content,
+                "</chunk>",
+            )
+        )
+    lines.append("</retrieved_context>")
+    return "\n".join(lines)
 
 
 def _event_type_for_chunk(chunk: ModelChunk) -> RunEventType:

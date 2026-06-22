@@ -33,6 +33,7 @@ class KnowledgeRetrieverService(KnowledgeRetriever):
         knowledge_base_ids: tuple[UUID, ...],
         query: str,
         limit: int,
+        deadline: float | None = None,
     ) -> tuple[RetrievedChunk, ...]:
         if not knowledge_base_ids:
             return ()
@@ -59,7 +60,7 @@ class KnowledgeRetrieverService(KnowledgeRetriever):
                 attempt_id=new_uuid(),
                 team_id=team_id,
                 user_id=user_id,
-                deadline=monotonic() + self._embedding_timeout_seconds,
+                deadline=deadline or monotonic() + self._embedding_timeout_seconds,
                 cancellation=_NeverCancelledToken(),
             ),
         )

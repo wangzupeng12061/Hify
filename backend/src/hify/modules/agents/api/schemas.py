@@ -11,6 +11,7 @@ class CreateAgentRequest(BaseModel):
     description: str | None = Field(default=None, max_length=500)
     system_prompt: str = Field(min_length=1, max_length=20000)
     provider_model_id: UUID
+    knowledge_base_ids: tuple[UUID, ...] = Field(default_factory=tuple, max_length=10)
 
 
 class AgentResponse(BaseModel):
@@ -22,6 +23,7 @@ class AgentResponse(BaseModel):
     description: str | None
     status: str
     provider_model_id: UUID
+    knowledge_base_ids: tuple[UUID, ...]
     latest_version_number: int
     created_at: datetime
     updated_at: datetime
@@ -37,6 +39,7 @@ class AgentVersionResponse(BaseModel):
     name: str
     description: str | None
     system_prompt: str
+    knowledge_base_ids: tuple[UUID, ...]
     provider_model_id: UUID
     provider_type: str
     provider_name: str

@@ -19,6 +19,7 @@ def test_create_agent_normalizes_fields() -> None:
         description="  Answers   questions ",
         system_prompt="  You are helpful. ",
         provider_model_id=UUID("00000000-0000-7000-8000-000000000002"),
+        knowledge_base_ids=(UUID("00000000-0000-7000-8000-000000000004"),),
         created_by=UUID("00000000-0000-7000-8000-000000000003"),
         now=now,
     )
@@ -26,6 +27,7 @@ def test_create_agent_normalizes_fields() -> None:
     assert agent.name == "Support Bot"
     assert agent.description == "Answers questions"
     assert agent.system_prompt == "You are helpful."
+    assert agent.knowledge_base_ids == (UUID("00000000-0000-7000-8000-000000000004"),)
     assert agent.status == AgentStatus.DRAFT
     assert agent.latest_version_number == 0
 
@@ -38,6 +40,7 @@ def test_publish_agent_creates_immutable_version_snapshot() -> None:
         description=None,
         system_prompt="You are helpful.",
         provider_model_id=UUID("00000000-0000-7000-8000-000000000002"),
+        knowledge_base_ids=(UUID("00000000-0000-7000-8000-000000000004"),),
         created_by=UUID("00000000-0000-7000-8000-000000000003"),
         now=now,
     )
@@ -64,6 +67,7 @@ def test_publish_agent_creates_immutable_version_snapshot() -> None:
     assert version.version_number == 1
     assert version.model_name == "gpt-4.1"
     assert version.system_prompt == "You are helpful."
+    assert version.knowledge_base_ids == agent.knowledge_base_ids
 
 
 def test_model_binding_snapshot_rejects_invalid_context_window() -> None:

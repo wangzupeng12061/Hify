@@ -42,15 +42,19 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         credential_encryption_key=resolved_settings.provider_credential_encryption_key,
         credential_key_version=resolved_settings.provider_credential_key_version,
     )
-    agents = create_agents_module(session_factory, model_catalog=providers.model_catalog)
-    conversations = create_conversations_module(
-        session_factory,
-        agent_catalog=agents.agent_catalog,
-    )
     knowledge = create_knowledge_module(
         session_factory,
         model_catalog=providers.model_catalog,
         embedding_gateway=providers.embedding_gateway,
+    )
+    agents = create_agents_module(
+        session_factory,
+        model_catalog=providers.model_catalog,
+        knowledge_base_catalog=knowledge.knowledge_base_catalog,
+    )
+    conversations = create_conversations_module(
+        session_factory,
+        agent_catalog=agents.agent_catalog,
     )
     tools = create_tools_module(session_factory)
     runs = create_runs_module(
@@ -59,6 +63,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         agent_catalog=agents.agent_catalog,
         model_gateway=providers.model_gateway,
         tool_executor=tools.tool_executor,
+        knowledge_retriever=knowledge.knowledge_retriever,
     )
     return HifyContainer(
         settings=resolved_settings,

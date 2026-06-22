@@ -195,6 +195,7 @@ def published_agent_version(team_id: UUID) -> AgentVersionInfo:
         name="Support Bot",
         description=None,
         system_prompt="You are helpful.",
+        knowledge_base_ids=(),
         provider_model_id=UUID("00000000-0000-7000-8000-000000000006"),
         provider_type="openai",
         provider_name="OpenAI",

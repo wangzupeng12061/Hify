@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, String, Text, text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -53,6 +54,12 @@ class AgentModel(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     provider_model_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    knowledge_base_ids: Mapped[list[UUID]] = mapped_column(
+        ARRAY(PGUUID(as_uuid=True)),
+        nullable=False,
+        default=list,
+        server_default=text("'{}'::uuid[]"),
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=AgentStatus.DRAFT.value)
     latest_version_number: Mapped[int] = mapped_column(
         BigInteger,
@@ -125,6 +132,12 @@ class AgentVersionModel(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    knowledge_base_ids: Mapped[list[UUID]] = mapped_column(
+        ARRAY(PGUUID(as_uuid=True)),
+        nullable=False,
+        default=list,
+        server_default=text("'{}'::uuid[]"),
+    )
     provider_model_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
     provider_type: Mapped[str] = mapped_column(String(32), nullable=False)
     provider_name: Mapped[str] = mapped_column(Text, nullable=False)

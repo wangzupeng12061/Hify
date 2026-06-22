@@ -13,10 +13,11 @@ from hify.modules.knowledge.application.commands.create_knowledge_base import (
 from hify.modules.knowledge.application.commands.ingest_document import IngestDocumentHandler
 from hify.modules.knowledge.application.queries.get_knowledge_base import (
     GetKnowledgeBaseForActorHandler,
+    KnowledgeBaseCatalogService,
     ListKnowledgeBasesForActorHandler,
 )
 from hify.modules.knowledge.application.queries.retrieve_chunks import KnowledgeRetrieverService
-from hify.modules.knowledge.contracts.services import KnowledgeRetriever
+from hify.modules.knowledge.contracts.services import KnowledgeBaseCatalog, KnowledgeRetriever
 from hify.modules.knowledge.infrastructure.database.uow import SqlAlchemyKnowledgeUnitOfWork
 from hify.modules.providers.contracts.services import EmbeddingGateway, ModelCatalog
 from hify.shared.domain.clock import Clock, SystemClock
@@ -25,6 +26,7 @@ from hify.shared.domain.clock import Clock, SystemClock
 @dataclass(frozen=True, slots=True)
 class KnowledgeModule:
     router: APIRouter
+    knowledge_base_catalog: KnowledgeBaseCatalog
     knowledge_retriever: KnowledgeRetriever
 
 
@@ -52,6 +54,7 @@ def create_knowledge_module(
         embedding_gateway,
         module_clock,
     )
+    knowledge_base_catalog = KnowledgeBaseCatalogService(unit_of_work_factory)
     knowledge_retriever = KnowledgeRetrieverService(unit_of_work_factory, embedding_gateway)
     router = create_knowledge_router(
         create_knowledge_base_handler=create_knowledge_base_handler,
@@ -60,4 +63,8 @@ def create_knowledge_module(
         ingest_document_handler=ingest_document_handler,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),
     )
-    return KnowledgeModule(router=router, knowledge_retriever=knowledge_retriever)
+    return KnowledgeModule(
+        router=router,
+        knowledge_base_catalog=knowledge_base_catalog,
+        knowledge_retriever=knowledge_retriever,
+    )

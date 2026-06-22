@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hify.modules.agents.contracts.services import AgentCatalog
 from hify.modules.conversations.contracts.services import ConversationReader
+from hify.modules.knowledge.contracts.services import KnowledgeRetriever
 from hify.modules.providers.contracts.services import ModelGateway
 from hify.modules.runs.api.dependencies import AuthenticationNotConfiguredAuthenticator
 from hify.modules.runs.api.router import create_runs_router
@@ -39,6 +40,7 @@ def create_runs_module(
     agent_catalog: AgentCatalog,
     model_gateway: ModelGateway,
     tool_executor: ToolExecutor,
+    knowledge_retriever: KnowledgeRetriever,
     clock: Clock | None = None,
 ) -> RunsModule:
     module_clock = clock or SystemClock()
@@ -64,6 +66,7 @@ def create_runs_module(
         agent_catalog,
         model_gateway,
         tool_executor,
+        knowledge_retriever,
         module_clock,
     )
     router = create_runs_router(

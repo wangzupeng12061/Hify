@@ -26,6 +26,7 @@ class SqlAlchemyAgentRepository:
         model.description = agent.description
         model.system_prompt = agent.system_prompt
         model.provider_model_id = agent.provider_model_id
+        model.knowledge_base_ids = list(agent.knowledge_base_ids)
         model.status = agent.status.value
         model.latest_version_number = agent.latest_version_number
         model.version = agent.version
@@ -82,6 +83,7 @@ def _agent_to_model(agent: Agent) -> AgentModel:
         description=agent.description,
         system_prompt=agent.system_prompt,
         provider_model_id=agent.provider_model_id,
+        knowledge_base_ids=list(agent.knowledge_base_ids),
         status=agent.status.value,
         latest_version_number=agent.latest_version_number,
         version=agent.version,
@@ -99,6 +101,7 @@ def _agent_from_model(model: AgentModel) -> Agent:
         description=model.description,
         system_prompt=model.system_prompt,
         provider_model_id=model.provider_model_id,
+        knowledge_base_ids=tuple(model.knowledge_base_ids),
         status=AgentStatus(model.status),
         latest_version_number=model.latest_version_number,
         version=model.version,
@@ -117,6 +120,7 @@ def _agent_version_to_model(agent_version: AgentVersion) -> AgentVersionModel:
         name=agent_version.name,
         description=agent_version.description,
         system_prompt=agent_version.system_prompt,
+        knowledge_base_ids=list(agent_version.knowledge_base_ids),
         provider_model_id=agent_version.provider_model_id,
         provider_type=agent_version.provider_type,
         provider_name=agent_version.provider_name,
@@ -140,6 +144,7 @@ def _agent_version_from_model(model: AgentVersionModel) -> AgentVersion:
         name=model.name,
         description=model.description,
         system_prompt=model.system_prompt,
+        knowledge_base_ids=tuple(model.knowledge_base_ids),
         provider_model_id=model.provider_model_id,
         provider_type=model.provider_type,
         provider_name=model.provider_name,

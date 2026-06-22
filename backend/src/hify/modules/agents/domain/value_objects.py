@@ -13,6 +13,9 @@ class AgentStatus(StrEnum):
     ARCHIVED = "archived"
 
 
+MAX_AGENT_KNOWLEDGE_BASES = 10
+
+
 def normalize_agent_name(value: str) -> str:
     normalized = " ".join(value.strip().split())
     if not normalized:
@@ -40,6 +43,19 @@ def normalize_system_prompt(value: str) -> str:
     if len(normalized) > 20000:
         raise AgentValidationError("system prompt must be at most 20000 characters")
     return normalized
+
+
+def normalize_knowledge_base_ids(values: tuple[UUID, ...]) -> tuple[UUID, ...]:
+    seen: set[UUID] = set()
+    normalized: list[UUID] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    if len(normalized) > MAX_AGENT_KNOWLEDGE_BASES:
+        raise AgentValidationError("agent can bind at most 10 knowledge bases")
+    return tuple(normalized)
 
 
 @dataclass(frozen=True, slots=True)

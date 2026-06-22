@@ -16,6 +16,7 @@ from hify.modules.conversations.contracts.dto import (
     ConversationMessagePage,
 )
 from hify.modules.identity.contracts.dto import ActorContext
+from hify.modules.knowledge.contracts.dto import RetrievedChunk
 from hify.modules.providers.contracts.dto import (
     CallContext,
     DoneChunk,
@@ -245,6 +246,7 @@ def agent_version_for_conversation(conversation: ConversationInfo) -> AgentVersi
         name="Support Bot",
         description=None,
         system_prompt="You are helpful.",
+        knowledge_base_ids=(),
         provider_model_id=UUID("00000000-0000-7000-8000-000000000007"),
         provider_type="openai",
         provider_name="OpenAI",
@@ -315,6 +317,25 @@ class RecordingToolExecutor:
             content="tool result",
             metadata={"ok": True},
         )
+
+
+class RecordingKnowledgeRetriever:
+    def __init__(self, chunks: tuple[RetrievedChunk, ...] = ()) -> None:
+        self.chunks = chunks
+        self.requests: list[tuple[UUID, UUID, tuple[UUID, ...], str, int, float | None]] = []
+
+    async def retrieve(
+        self,
+        *,
+        team_id: UUID,
+        user_id: UUID,
+        knowledge_base_ids: tuple[UUID, ...],
+        query: str,
+        limit: int,
+        deadline: float | None = None,
+    ) -> tuple[RetrievedChunk, ...]:
+        self.requests.append((team_id, user_id, knowledge_base_ids, query, limit, deadline))
+        return self.chunks
 
 
 @pytest.mark.asyncio
@@ -511,6 +532,7 @@ async def test_run_executor_streams_model_chunks_into_run_events() -> None:
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         gateway,
         RecordingToolExecutor(),
+        RecordingKnowledgeRetriever(),
         FixedClock(),
     )
 
@@ -550,6 +572,7 @@ async def test_run_executor_marks_run_failed_on_provider_error() -> None:
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         RecordingModelGateway((), ProviderUnavailableError("model unavailable")),
         RecordingToolExecutor(),
+        RecordingKnowledgeRetriever(),
         FixedClock(),
     )
 
@@ -574,6 +597,7 @@ async def test_run_executor_marks_run_interrupted_after_stream_interruption() ->
             ProviderStreamInterruptedError("stream interrupted"),
         ),
         RecordingToolExecutor(),
+        RecordingKnowledgeRetriever(),
         FixedClock(),
     )
 
@@ -581,6 +605,83 @@ async def test_run_executor_marks_run_interrupted_after_stream_interruption() ->
 
     assert result.status == "interrupted"
     assert result.error_code == "PROVIDER_STREAM_INTERRUPTED_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_run_executor_retrieves_knowledge_and_injects_context() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    message = ConversationMessageInfo(
+        id=UUID("00000000-0000-7000-8000-000000000008"),
+        team_id=actor.team_id,
+        conversation_id=conversation.id,
+        sequence_number=1,
+        role="user",
+        content="How do I restart the API?",
+        status="created",
+        created_at=datetime(2026, 6, 22, tzinfo=UTC),
+    )
+    run = await _create_run(unit_of_work, actor)
+    gateway = RecordingModelGateway((DoneChunk(chunk_type="done", finish_reason="stop"),))
+    knowledge_base_id = UUID("00000000-0000-7000-8000-000000000090")
+    agent_version = AgentVersionInfo(
+        id=UUID("00000000-0000-7000-8000-000000000006"),
+        team_id=conversation.team_id,
+        agent_id=conversation.agent_id,
+        version_number=1,
+        name="Support Bot",
+        description=None,
+        system_prompt="You are helpful.",
+        knowledge_base_ids=(knowledge_base_id,),
+        provider_model_id=UUID("00000000-0000-7000-8000-000000000007"),
+        provider_type="openai",
+        provider_name="OpenAI",
+        model_name="gpt-4.1",
+        model_display_name="GPT 4.1",
+        context_window_tokens=128000,
+        supports_tools=True,
+        supports_vision=False,
+        supports_structured_output=True,
+        created_at=datetime(2026, 6, 22, tzinfo=UTC),
+    )
+    retriever = RecordingKnowledgeRetriever(
+        (
+            RetrievedChunk(
+                chunk_id=UUID("00000000-0000-7000-8000-000000000091"),
+                team_id=actor.team_id,
+                knowledge_base_id=knowledge_base_id,
+                document_id=UUID("00000000-0000-7000-8000-000000000092"),
+                position=0,
+                content="Restart the API by rolling the api deployment.",
+                score=0.87,
+            ),
+        )
+    )
+    executor = RunExecutor(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation, (message,)),
+        FakeAgentCatalog(agent_version),
+        gateway,
+        RecordingToolExecutor(),
+        retriever,
+        FixedClock(),
+    )
+
+    result = await executor.execute(ExecuteRunCommand(run_id=run.id))
+    events = await unit_of_work.events.list_by_run(
+        run_id=run.id,
+        after_sequence_number=None,
+        limit=30,
+    )
+    steps = await unit_of_work.steps.list_by_run(run_id=run.id)
+
+    assert result.status == "succeeded"
+    assert retriever.requests[0][2] == (knowledge_base_id,)
+    assert retriever.requests[0][3] == "How do I restart the API?"
+    assert "Restart the API by rolling the api deployment." in (gateway.requests[0].system_prompt or "")
+    assert [step.step_type.value for step in steps] == ["retrieval", "llm_call"]
+    assert "retrieval_result" in [event.payload.get("chunk_type") for event in events]
 
 
 @pytest.mark.asyncio
@@ -615,6 +716,7 @@ async def test_run_executor_executes_tool_calls_and_continues_model_loop() -> No
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         gateway,
         tool_executor,
+        RecordingKnowledgeRetriever(),
         FixedClock(),
     )
 
@@ -664,6 +766,7 @@ async def test_run_executor_marks_run_failed_when_tool_fails() -> None:
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         gateway,
         RecordingToolExecutor(ToolExecutionHttpError("tool failed")),
+        RecordingKnowledgeRetriever(),
         FixedClock(),
     )
 
@@ -708,6 +811,7 @@ async def test_run_executor_enforces_max_tool_iterations() -> None:
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         gateway,
         RecordingToolExecutor(),
+        RecordingKnowledgeRetriever(),
         FixedClock(),
         max_tool_iterations=1,
     )

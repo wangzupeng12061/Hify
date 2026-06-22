@@ -10,6 +10,7 @@ from hify.modules.agents.application.ports import AgentsUnitOfWorkFactory
 from hify.modules.agents.contracts.dto import AgentVersionInfo
 from hify.modules.agents.domain.errors import AgentNotFoundError
 from hify.modules.identity.contracts.dto import ActorContext
+from hify.modules.knowledge.contracts.services import KnowledgeBaseCatalog
 from hify.modules.providers.contracts.services import ModelCatalog
 from hify.shared.domain.clock import Clock
 
@@ -25,10 +26,12 @@ class PublishAgentHandler:
         self,
         unit_of_work_factory: AgentsUnitOfWorkFactory,
         model_catalog: ModelCatalog,
+        knowledge_base_catalog: KnowledgeBaseCatalog,
         clock: Clock,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._model_catalog = model_catalog
+        self._knowledge_base_catalog = knowledge_base_catalog
         self._clock = clock
 
     async def handle(self, command: PublishAgentCommand) -> AgentVersionInfo:
@@ -44,6 +47,11 @@ class PublishAgentHandler:
                 team_id=command.actor.team_id,
                 model_id=agent.provider_model_id,
             )
+            for knowledge_base_id in agent.knowledge_base_ids:
+                await self._knowledge_base_catalog.get_knowledge_base(
+                    team_id=command.actor.team_id,
+                    knowledge_base_id=knowledge_base_id,
+                )
             model_snapshot = model_binding_snapshot_from_model_info(model)
             agent_version = agent.publish(
                 model_snapshot=model_snapshot,
