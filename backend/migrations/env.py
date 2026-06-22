@@ -14,6 +14,7 @@ import hify.modules.agents.infrastructure.database.models  # noqa: F401
 import hify.modules.conversations.infrastructure.database.models  # noqa: F401
 import hify.modules.identity.infrastructure.database.models  # noqa: F401
 import hify.modules.providers.infrastructure.database.models  # noqa: F401
+import hify.modules.runs.infrastructure.database.models  # noqa: F401
 import hify.shared.infrastructure.messaging  # noqa: F401
 
 config = context.config
