@@ -266,6 +266,8 @@ def agent_version_for_conversation(conversation: ConversationInfo) -> AgentVersi
 
 
 def agent_version_with_workflow(conversation: ConversationInfo) -> AgentVersionInfo:
+    model_id = UUID("00000000-0000-7000-8000-000000000007")
+    tool_id = UUID("00000000-0000-7000-8000-000000000012")
     return AgentVersionInfo(
         id=UUID("00000000-0000-7000-8000-000000000006"),
         team_id=conversation.team_id,
@@ -282,11 +284,28 @@ def agent_version_with_workflow(conversation: ConversationInfo) -> AgentVersionI
         workflow_definition={
             "nodes": [
                 {"id": "start", "kind": "start", "config": {}},
+                {
+                    "id": "llm",
+                    "kind": "llm",
+                    "config": {"provider_model_id": str(model_id)},
+                },
+                {
+                    "id": "tool",
+                    "kind": "tool",
+                    "config": {
+                        "tool_id": str(tool_id),
+                        "arguments": {"query": "status"},
+                    },
+                },
                 {"id": "end", "kind": "end", "config": {}},
             ],
-            "edges": [{"source_node_id": "start", "target_node_id": "end"}],
+            "edges": [
+                {"source_node_id": "start", "target_node_id": "llm"},
+                {"source_node_id": "llm", "target_node_id": "tool"},
+                {"source_node_id": "tool", "target_node_id": "end"},
+            ],
         },
-        provider_model_id=UUID("00000000-0000-7000-8000-000000000007"),
+        provider_model_id=model_id,
         provider_type="openai",
         provider_name="OpenAI",
         model_name="gpt-4.1",
@@ -296,6 +315,48 @@ def agent_version_with_workflow(conversation: ConversationInfo) -> AgentVersionI
         supports_vision=False,
         supports_structured_output=True,
         created_at=datetime(2026, 6, 22, tzinfo=UTC),
+    )
+
+
+def agent_version_with_unsupported_workflow(conversation: ConversationInfo) -> AgentVersionInfo:
+    agent_version = agent_version_with_workflow(conversation)
+    return AgentVersionInfo(
+        id=agent_version.id,
+        team_id=agent_version.team_id,
+        agent_id=agent_version.agent_id,
+        version_number=agent_version.version_number,
+        name=agent_version.name,
+        description=agent_version.description,
+        system_prompt=agent_version.system_prompt,
+        knowledge_base_ids=agent_version.knowledge_base_ids,
+        workflow_id=agent_version.workflow_id,
+        workflow_version_id=agent_version.workflow_version_id,
+        workflow_version_number=agent_version.workflow_version_number,
+        workflow_name=agent_version.workflow_name,
+        workflow_definition={
+            "nodes": [
+                {"id": "start", "kind": "start", "config": {}},
+                {"id": "left", "kind": "llm", "config": {"provider_model_id": str(agent_version.provider_model_id)}},
+                {"id": "right", "kind": "llm", "config": {"provider_model_id": str(agent_version.provider_model_id)}},
+                {"id": "end", "kind": "end", "config": {}},
+            ],
+            "edges": [
+                {"source_node_id": "start", "target_node_id": "left"},
+                {"source_node_id": "start", "target_node_id": "right"},
+                {"source_node_id": "left", "target_node_id": "end"},
+                {"source_node_id": "right", "target_node_id": "end"},
+            ],
+        },
+        provider_model_id=agent_version.provider_model_id,
+        provider_type=agent_version.provider_type,
+        provider_name=agent_version.provider_name,
+        model_name=agent_version.model_name,
+        model_display_name=agent_version.model_display_name,
+        context_window_tokens=agent_version.context_window_tokens,
+        supports_tools=agent_version.supports_tools,
+        supports_vision=agent_version.supports_vision,
+        supports_structured_output=agent_version.supports_structured_output,
+        created_at=agent_version.created_at,
     )
 
 
@@ -628,19 +689,25 @@ async def test_run_executor_streams_model_chunks_into_run_events() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_executor_records_workflow_snapshot_without_executing_workflow() -> None:
+async def test_run_executor_executes_linear_workflow_runtime() -> None:
     unit_of_work = FakeRunsUnitOfWork()
     actor = actor_with_run_permissions()
     conversation = conversation_for_actor(actor)
     run = await _create_run(unit_of_work, actor)
     agent_version = agent_version_with_workflow(conversation)
-    gateway = RecordingModelGateway((DoneChunk(chunk_type="done", finish_reason="stop"),))
+    gateway = RecordingModelGateway(
+        (
+            TextDeltaChunk(chunk_type="text_delta", text="Workflow response"),
+            DoneChunk(chunk_type="done", finish_reason="stop"),
+        )
+    )
+    tool_executor = RecordingToolExecutor()
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
         FakeAgentCatalog(agent_version),
         gateway,
-        RecordingToolExecutor(),
+        tool_executor,
         RecordingKnowledgeRetriever(),
         FixedClock(),
     )
@@ -656,14 +723,69 @@ async def test_run_executor_records_workflow_snapshot_without_executing_workflow
         for event in events
         if event.payload.get("chunk_type") == "workflow_snapshot"
     ]
+    steps = await unit_of_work.steps.list_by_run(run_id=run.id)
 
     assert result.status == "succeeded"
     assert len(gateway.requests) == 1
+    assert gateway.requests[0].model_id == agent_version.provider_model_id
+    assert gateway.requests[0].system_prompt == "You are helpful."
+    assert len(tool_executor.requests) == 1
+    assert tool_executor.requests[0].arguments == {"query": "status"}
     assert len(workflow_events) == 1
     assert workflow_events[0].payload["workflow_version_id"] == str(
         agent_version.workflow_version_id
     )
     assert workflow_events[0].payload["workflow_definition"] == agent_version.workflow_definition
+    assert [step.step_type.value for step in steps] == [
+        "system",
+        "llm_call",
+        "tool_call",
+        "system",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_executor_rejects_unsupported_workflow_definition() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    run = await _create_run(unit_of_work, actor)
+    executor = RunExecutor(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation),
+        FakeAgentCatalog(agent_version_with_unsupported_workflow(conversation)),
+        RecordingModelGateway(()),
+        RecordingToolExecutor(),
+        RecordingKnowledgeRetriever(),
+        FixedClock(),
+    )
+
+    result = await executor.execute(ExecuteRunCommand(run_id=run.id))
+
+    assert result.status == "failed"
+    assert result.error_code == "WORKFLOW_RUNTIME_UNSUPPORTED_DEFINITION"
+
+
+@pytest.mark.asyncio
+async def test_run_executor_marks_workflow_run_failed_when_tool_node_fails() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    run = await _create_run(unit_of_work, actor)
+    executor = RunExecutor(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation),
+        FakeAgentCatalog(agent_version_with_workflow(conversation)),
+        RecordingModelGateway((DoneChunk(chunk_type="done", finish_reason="stop"),)),
+        RecordingToolExecutor(ToolExecutionHttpError("tool failed")),
+        RecordingKnowledgeRetriever(),
+        FixedClock(),
+    )
+
+    result = await executor.execute(ExecuteRunCommand(run_id=run.id))
+
+    assert result.status == "failed"
+    assert result.error_code == "TOOL_EXECUTION_HTTP_ERROR"
 
 
 @pytest.mark.asyncio
