@@ -10,6 +10,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from hify.shared.infrastructure.database import Base
+import hify.modules.identity.infrastructure.database.models  # noqa: F401
 import hify.shared.infrastructure.messaging  # noqa: F401
 
 config = context.config

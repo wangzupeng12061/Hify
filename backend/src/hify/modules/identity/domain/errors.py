@@ -1,0 +1,45 @@
+from __future__ import annotations
+
+from hify.shared.domain.errors import (
+    ConflictError,
+    HifyError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
+
+
+class IdentityError(HifyError):
+    code = "IDENTITY_ERROR"
+
+
+class IdentityValidationError(ValidationError):
+    code = "IDENTITY_VALIDATION_ERROR"
+
+
+class UserNotFoundError(NotFoundError):
+    code = "IDENTITY_USER_NOT_FOUND"
+
+
+class TeamNotFoundError(NotFoundError):
+    code = "IDENTITY_TEAM_NOT_FOUND"
+
+
+class MembershipNotFoundError(NotFoundError):
+    code = "IDENTITY_MEMBERSHIP_NOT_FOUND"
+
+
+class UserEmailAlreadyExistsError(ConflictError):
+    code = "IDENTITY_USER_EMAIL_ALREADY_EXISTS"
+
+
+class TeamNameAlreadyExistsError(ConflictError):
+    code = "IDENTITY_TEAM_NAME_ALREADY_EXISTS"
+
+
+class MembershipAlreadyExistsError(ConflictError):
+    code = "IDENTITY_MEMBERSHIP_ALREADY_EXISTS"
+
+
+class IdentityPermissionDeniedError(PermissionDeniedError):
+    code = "IDENTITY_PERMISSION_DENIED"
