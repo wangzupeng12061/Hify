@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from asyncio import CancelledError
 from dataclasses import dataclass
 from time import monotonic
 from typing import Literal, cast
@@ -8,6 +9,7 @@ from uuid import UUID
 from hify.modules.agents.contracts.services import AgentCatalog
 from hify.modules.conversations.contracts.dto import ConversationMessageInfo
 from hify.modules.conversations.contracts.services import ConversationReader
+from hify.modules.identity.contracts.dto import ActorContext
 from hify.modules.providers.contracts.dto import (
     CallContext,
     DoneChunk,
@@ -26,12 +28,13 @@ from hify.modules.providers.contracts.errors import (
     ProviderStreamInterruptedError,
 )
 from hify.modules.providers.contracts.services import ModelGateway
+from hify.modules.runs.application.authorization import require_execute_runs
 from hify.modules.runs.application.dto import run_info_from_domain
 from hify.modules.runs.application.ports import RunsUnitOfWork, RunsUnitOfWorkFactory
 from hify.modules.runs.contracts.dto import RunInfo
 from hify.modules.runs.domain.entities import AgentRun, RunStep
-from hify.modules.runs.domain.errors import RunNotFoundError
-from hify.modules.runs.domain.value_objects import RunEventType, RunStepType
+from hify.modules.runs.domain.errors import RunNotFoundError, RunStateConflictError
+from hify.modules.runs.domain.value_objects import RunEventType, RunStatus, RunStepType
 from hify.shared.domain.clock import Clock
 from hify.shared.domain.ids import new_uuid
 
@@ -39,6 +42,8 @@ from hify.shared.domain.ids import new_uuid
 @dataclass(frozen=True, slots=True)
 class ExecuteRunCommand:
     run_id: UUID
+    actor: ActorContext | None = None
+    cancellation: RunCancellationToken | None = None
 
 
 class RunCancellationToken:
@@ -75,7 +80,8 @@ class RunExecutor:
         self._run_timeout_seconds = run_timeout_seconds
 
     async def execute(self, command: ExecuteRunCommand) -> RunInfo:
-        run, step = await self._mark_run_started(command.run_id)
+        cancellation = command.cancellation or RunCancellationToken()
+        run, step = await self._mark_run_started(command.run_id, command.actor)
         agent_version = await self._agent_catalog.get_agent_version(
             team_id=run.team_id,
             agent_version_id=run.agent_version_id,
@@ -92,12 +98,17 @@ class RunExecutor:
             team_id=run.team_id,
             user_id=run.created_by,
             deadline=monotonic() + self._run_timeout_seconds,
-            cancellation=RunCancellationToken(),
+            cancellation=cancellation,
         )
 
         try:
             async for chunk in self._model_gateway.stream(request, context):
+                cancellation.raise_if_cancelled()
                 await self._record_chunk(run.id, chunk)
+        except CancelledError:
+            cancellation.cancel()
+            await self._mark_run_cancelled(run.id, step.id)
+            raise
         except ProviderStreamInterruptedError as exc:
             return await self._mark_run_interrupted(run.id, step.id, exc)
         except ProviderCancelledError:
@@ -114,11 +125,32 @@ class RunExecutor:
 
         return await self._mark_run_succeeded(run.id, step.id)
 
-    async def _mark_run_started(self, run_id: UUID) -> tuple[AgentRun, RunStep]:
+    async def prepare_execution(self, command: ExecuteRunCommand) -> RunInfo:
+        if command.actor is not None:
+            require_execute_runs(command.actor)
+
+        async with self._unit_of_work_factory() as unit_of_work:
+            run = await unit_of_work.runs.get_by_id(command.run_id)
+        if run is None or (
+            command.actor is not None and run.team_id != command.actor.team_id
+        ):
+            raise RunNotFoundError("run was not found")
+        if run.status is not RunStatus.QUEUED:
+            raise RunStateConflictError("only queued runs can be executed")
+        return run_info_from_domain(run)
+
+    async def _mark_run_started(
+        self,
+        run_id: UUID,
+        actor: ActorContext | None,
+    ) -> tuple[AgentRun, RunStep]:
+        if actor is not None:
+            require_execute_runs(actor)
+
         now = self._clock.now()
         async with self._unit_of_work_factory() as unit_of_work:
             run = await unit_of_work.runs.get_by_id(run_id)
-            if run is None:
+            if run is None or (actor is not None and run.team_id != actor.team_id):
                 raise RunNotFoundError("run was not found")
             run.mark_running(now)
             run_started_event = run.create_event(
