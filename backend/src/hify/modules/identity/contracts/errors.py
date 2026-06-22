@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-
-class IdentityContractError(Exception):
-    error_code = "IDENTITY_CONTRACT_ERROR"
+from hify.shared.domain.errors import HifyError, PermissionDeniedError
 
 
-class IdentityAccessDeniedContractError(IdentityContractError):
-    error_code = "IDENTITY_ACCESS_DENIED"
+class IdentityContractError(HifyError):
+    code = "IDENTITY_CONTRACT_ERROR"
+
+
+class IdentityAccessDeniedContractError(PermissionDeniedError):
+    code = "IDENTITY_ACCESS_DENIED"

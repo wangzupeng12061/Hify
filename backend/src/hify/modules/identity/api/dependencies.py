@@ -6,5 +6,5 @@ from uuid import UUID
 from fastapi import Header
 
 
-UserIdHeader = Annotated[UUID, Header(alias="X-Hify-User-Id")]
-TeamIdHeader = Annotated[UUID, Header(alias="X-Hify-Team-Id")]
+DevelopmentUserIdHeader = Annotated[UUID | None, Header(alias="X-Hify-User-Id")]
+DevelopmentTeamIdHeader = Annotated[UUID | None, Header(alias="X-Hify-Team-Id")]

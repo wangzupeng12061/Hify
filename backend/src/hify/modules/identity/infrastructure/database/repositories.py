@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hify.modules.identity.domain.entities import Team, TeamMembership, User
@@ -34,7 +34,7 @@ class SqlAlchemyUserRepository:
         return _user_from_model(model)
 
     async def get_by_email(self, email: EmailAddress) -> User | None:
-        statement = select(UserModel).where(UserModel.email == email.value)
+        statement = select(UserModel).where(func.lower(UserModel.email) == email.value)
         model = await self._session.scalar(statement)
         if model is None:
             return None
@@ -55,7 +55,7 @@ class SqlAlchemyTeamRepository:
         return _team_from_model(model)
 
     async def get_by_name(self, name: str) -> Team | None:
-        statement = select(TeamModel).where(TeamModel.name == name)
+        statement = select(TeamModel).where(func.lower(TeamModel.name) == name.lower())
         model = await self._session.scalar(statement)
         if model is None:
             return None

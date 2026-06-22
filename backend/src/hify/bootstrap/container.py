@@ -24,7 +24,10 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         echo=resolved_settings.database_echo,
     )
     session_factory = create_session_factory(engine)
-    identity = create_identity_module(session_factory)
+    identity = create_identity_module(
+        session_factory,
+        allow_development_header_auth=resolved_settings.enable_development_header_auth,
+    )
     return HifyContainer(
         settings=resolved_settings,
         engine=engine,

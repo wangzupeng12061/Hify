@@ -28,6 +28,7 @@ def create_identity_module(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     clock: SystemClock | None = None,
+    allow_development_header_auth: bool = False,
 ) -> IdentityModule:
     module_clock = clock or SystemClock()
 
@@ -45,6 +46,7 @@ def create_identity_module(
         create_team_handler=create_team_handler,
         add_team_member_handler=add_team_member_handler,
         get_actor_context_handler=get_actor_context_handler,
+        allow_development_header_auth=allow_development_header_auth,
     )
 
     return IdentityModule(router=router, identity_access=identity_access)

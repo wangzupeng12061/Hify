@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from hify.modules.identity.api.dependencies import TeamIdHeader, UserIdHeader
+from hify.modules.identity.api.dependencies import DevelopmentTeamIdHeader, DevelopmentUserIdHeader
 from hify.modules.identity.api.schemas import (
     ActorContextResponse,
     AddTeamMemberRequest,
@@ -35,15 +34,32 @@ def create_identity_router(
     create_team_handler: CreateTeamHandler,
     add_team_member_handler: AddTeamMemberHandler,
     get_actor_context_handler: GetActorContextHandler,
+    allow_development_header_auth: bool = False,
 ) -> APIRouter:
     router = APIRouter(prefix="/identity", tags=["identity"])
 
     async def get_current_actor(
-        user_id: UserIdHeader,
-        team_id: TeamIdHeader,
+        header_user_id: DevelopmentUserIdHeader = None,
+        header_team_id: DevelopmentTeamIdHeader = None,
     ) -> ActorContext:
+        if not allow_development_header_auth:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "AUTHENTICATION_NOT_CONFIGURED",
+                    "message": "authentication is not configured for this API",
+                },
+            )
+        if header_user_id is None or header_team_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "AUTHENTICATION_REQUIRED",
+                    "message": "development header authentication requires user and team headers",
+                },
+            )
         try:
-            query = GetActorContextQuery(user_id=user_id, team_id=team_id)
+            query = GetActorContextQuery(user_id=header_user_id, team_id=header_team_id)
             return await get_actor_context_handler.handle(query)
         except HifyError as exc:
             raise _to_http_error(exc) from exc
@@ -83,7 +99,7 @@ def create_identity_router(
 
     @router.get("/me", response_model=ActorContextResponse)
     async def get_me(
-        actor: Annotated[ActorContext, Depends(get_current_actor)],
+        actor: ActorContext = Depends(get_current_actor),
     ) -> ActorContextResponse:
         return ActorContextResponse(
             user_id=actor.user_id,
@@ -101,7 +117,7 @@ def create_identity_router(
     async def add_team_member(
         team_id: UUID,
         request: AddTeamMemberRequest,
-        actor: Annotated[ActorContext, Depends(get_current_actor)],
+        actor: ActorContext = Depends(get_current_actor),
     ) -> MembershipResponse:
         try:
             command = AddTeamMemberCommand(

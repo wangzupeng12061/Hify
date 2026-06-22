@@ -8,3 +8,4 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://hify:hify@localhost:5432/hify"
     database_echo: bool = False
+    enable_development_header_auth: bool = False
