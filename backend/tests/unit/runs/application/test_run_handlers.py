@@ -15,6 +15,7 @@ from hify.modules.conversations.contracts.dto import (
     ConversationMessageInfo,
     ConversationMessagePage,
 )
+from hify.modules.conversations.contracts.errors import ConversationContractError
 from hify.modules.identity.contracts.dto import ActorContext
 from hify.modules.knowledge.contracts.dto import RetrievedChunk
 from hify.modules.providers.contracts.dto import (
@@ -85,6 +86,35 @@ class FakeConversationReader:
         assert cursor is None
         assert limit > 0
         return ConversationMessagePage(items=self.messages, next_cursor=None, has_more=False)
+
+
+class RecordingConversationWriter:
+    def __init__(self, error: ConversationContractError | None = None) -> None:
+        self.error = error
+        self.requests: list[tuple[UUID, UUID, str, UUID, UUID]] = []
+
+    async def append_assistant_message(
+        self,
+        *,
+        team_id: UUID,
+        conversation_id: UUID,
+        content: str,
+        source_run_id: UUID,
+        created_by: UUID,
+    ) -> ConversationMessageInfo:
+        self.requests.append((team_id, conversation_id, content, source_run_id, created_by))
+        if self.error is not None:
+            raise self.error
+        return ConversationMessageInfo(
+            id=UUID("00000000-0000-7000-8000-000000000099"),
+            team_id=team_id,
+            conversation_id=conversation_id,
+            sequence_number=2,
+            role="assistant",
+            content=content,
+            status="created",
+            created_at=datetime(2026, 6, 22, tzinfo=UTC),
+        )
 
 
 class FakeAgentCatalog:
@@ -654,9 +684,11 @@ async def test_run_executor_streams_model_chunks_into_run_events() -> None:
             DoneChunk(chunk_type="done", finish_reason="stop"),
         )
     )
+    conversation_writer = RecordingConversationWriter()
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation, (message,)),
+        conversation_writer,
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         gateway,
         RecordingToolExecutor(),
@@ -673,6 +705,9 @@ async def test_run_executor_streams_model_chunks_into_run_events() -> None:
     steps = await unit_of_work.steps.list_by_run(run_id=run.id)
 
     assert result.status == "succeeded"
+    assert conversation_writer.requests == [
+        (actor.team_id, conversation.id, "Hi", run.id, actor.user_id)
+    ]
     assert gateway.requests[0].messages[0].content == "Hello"
     assert gateway.requests[0].system_prompt == "You are helpful."
     assert steps[0].status.value == "succeeded"
@@ -689,6 +724,52 @@ async def test_run_executor_streams_model_chunks_into_run_events() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_executor_records_diagnostic_when_conversation_write_fails() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    run = await _create_run(unit_of_work, actor)
+    gateway = RecordingModelGateway(
+        (
+            TextDeltaChunk(chunk_type="text_delta", text="Hi"),
+            DoneChunk(chunk_type="done", finish_reason="stop"),
+        )
+    )
+    conversation_writer = RecordingConversationWriter(
+        ConversationContractError("conversation write failed")
+    )
+    executor = RunExecutor(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation),
+        conversation_writer,
+        FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        gateway,
+        RecordingToolExecutor(),
+        RecordingKnowledgeRetriever(),
+        FixedClock(),
+    )
+
+    result = await executor.execute(ExecuteRunCommand(run_id=run.id))
+    events = await unit_of_work.events.list_by_run(
+        run_id=run.id,
+        after_sequence_number=None,
+        limit=20,
+    )
+
+    assert result.status == "succeeded"
+    assert conversation_writer.requests == [
+        (actor.team_id, conversation.id, "Hi", run.id, actor.user_id)
+    ]
+    diagnostic_event = events[-1]
+    assert diagnostic_event.event_type == RunEventType.DIAGNOSTIC
+    assert diagnostic_event.payload == {
+        "chunk_type": "assistant_output_write_failed",
+        "error_code": "CONVERSATION_CONTRACT_ERROR",
+        "message": "conversation write failed",
+    }
+
+
+@pytest.mark.asyncio
 async def test_run_executor_executes_linear_workflow_runtime() -> None:
     unit_of_work = FakeRunsUnitOfWork()
     actor = actor_with_run_permissions()
@@ -702,9 +783,11 @@ async def test_run_executor_executes_linear_workflow_runtime() -> None:
         )
     )
     tool_executor = RecordingToolExecutor()
+    conversation_writer = RecordingConversationWriter()
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
+        conversation_writer,
         FakeAgentCatalog(agent_version),
         gateway,
         tool_executor,
@@ -726,6 +809,9 @@ async def test_run_executor_executes_linear_workflow_runtime() -> None:
     steps = await unit_of_work.steps.list_by_run(run_id=run.id)
 
     assert result.status == "succeeded"
+    assert conversation_writer.requests == [
+        (actor.team_id, conversation.id, "Workflow response", run.id, actor.user_id)
+    ]
     assert len(gateway.requests) == 1
     assert gateway.requests[0].model_id == agent_version.provider_model_id
     assert gateway.requests[0].system_prompt == "You are helpful."
@@ -753,6 +839,7 @@ async def test_run_executor_rejects_unsupported_workflow_definition() -> None:
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
+        RecordingConversationWriter(),
         FakeAgentCatalog(agent_version_with_unsupported_workflow(conversation)),
         RecordingModelGateway(()),
         RecordingToolExecutor(),
@@ -772,9 +859,11 @@ async def test_run_executor_marks_workflow_run_failed_when_tool_node_fails() -> 
     actor = actor_with_run_permissions()
     conversation = conversation_for_actor(actor)
     run = await _create_run(unit_of_work, actor)
+    conversation_writer = RecordingConversationWriter()
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
+        conversation_writer,
         FakeAgentCatalog(agent_version_with_workflow(conversation)),
         RecordingModelGateway((DoneChunk(chunk_type="done", finish_reason="stop"),)),
         RecordingToolExecutor(ToolExecutionHttpError("tool failed")),
@@ -786,6 +875,7 @@ async def test_run_executor_marks_workflow_run_failed_when_tool_node_fails() -> 
 
     assert result.status == "failed"
     assert result.error_code == "TOOL_EXECUTION_HTTP_ERROR"
+    assert conversation_writer.requests == []
 
 
 @pytest.mark.asyncio
@@ -794,9 +884,11 @@ async def test_run_executor_marks_run_failed_on_provider_error() -> None:
     actor = actor_with_run_permissions()
     conversation = conversation_for_actor(actor)
     run = await _create_run(unit_of_work, actor)
+    conversation_writer = RecordingConversationWriter()
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
+        conversation_writer,
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         RecordingModelGateway((), ProviderUnavailableError("model unavailable")),
         RecordingToolExecutor(),
@@ -808,6 +900,7 @@ async def test_run_executor_marks_run_failed_on_provider_error() -> None:
 
     assert result.status == "failed"
     assert result.error_code == "PROVIDER_UNAVAILABLE_ERROR"
+    assert conversation_writer.requests == []
 
 
 @pytest.mark.asyncio
@@ -819,6 +912,7 @@ async def test_run_executor_marks_run_interrupted_after_stream_interruption() ->
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
+        RecordingConversationWriter(),
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         RecordingModelGateway(
             (TextDeltaChunk(chunk_type="text_delta", text="partial"),),
@@ -894,6 +988,7 @@ async def test_run_executor_retrieves_knowledge_and_injects_context() -> None:
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation, (message,)),
+        RecordingConversationWriter(),
         FakeAgentCatalog(agent_version),
         gateway,
         RecordingToolExecutor(),
@@ -943,9 +1038,11 @@ async def test_run_executor_executes_tool_calls_and_continues_model_loop() -> No
         )
     )
     tool_executor = RecordingToolExecutor()
+    conversation_writer = RecordingConversationWriter()
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
+        conversation_writer,
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         gateway,
         tool_executor,
@@ -962,6 +1059,9 @@ async def test_run_executor_executes_tool_calls_and_continues_model_loop() -> No
     steps = await unit_of_work.steps.list_by_run(run_id=run.id)
 
     assert result.status == "succeeded"
+    assert conversation_writer.requests == [
+        (actor.team_id, conversation.id, "Done", run.id, actor.user_id)
+    ]
     assert tool_executor.requests[0] == ToolExecutionRequest(
         team_id=actor.team_id,
         tool_id=tool_id,
@@ -996,6 +1096,7 @@ async def test_run_executor_marks_run_failed_when_tool_fails() -> None:
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
+        RecordingConversationWriter(),
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         gateway,
         RecordingToolExecutor(ToolExecutionHttpError("tool failed")),
@@ -1041,6 +1142,7 @@ async def test_run_executor_enforces_max_tool_iterations() -> None:
     executor = RunExecutor(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
+        RecordingConversationWriter(),
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         gateway,
         RecordingToolExecutor(),

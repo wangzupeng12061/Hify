@@ -78,6 +78,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
     runs = create_runs_module(
         session_factory,
         conversation_reader=conversations.conversation_reader,
+        conversation_writer=conversations.conversation_writer,
         agent_catalog=agents.agent_catalog,
         model_gateway=providers.model_gateway,
         tool_executor=tools.tool_executor,

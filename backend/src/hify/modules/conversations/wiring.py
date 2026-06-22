@@ -11,6 +11,10 @@ from hify.modules.conversations.api.router import create_conversations_router
 from hify.modules.conversations.application.commands.append_conversation_message import (
     AppendConversationMessageHandler,
 )
+from hify.modules.conversations.application.commands.append_assistant_message import (
+    AppendAssistantMessageHandler,
+    ConversationWriterService,
+)
 from hify.modules.conversations.application.commands.create_conversation import (
     CreateConversationHandler,
 )
@@ -25,7 +29,7 @@ from hify.modules.conversations.application.queries.list_conversation_messages i
     ListConversationMessagesForActorHandler,
     ListConversationMessagesHandler,
 )
-from hify.modules.conversations.contracts.services import ConversationReader
+from hify.modules.conversations.contracts.services import ConversationReader, ConversationWriter
 from hify.modules.conversations.infrastructure.database.uow import SqlAlchemyConversationsUnitOfWork
 from hify.shared.domain.clock import Clock, SystemClock
 
@@ -34,6 +38,7 @@ from hify.shared.domain.clock import Clock, SystemClock
 class ConversationsModule:
     router: APIRouter
     conversation_reader: ConversationReader
+    conversation_writer: ConversationWriter
 
 
 def create_conversations_module(
@@ -53,6 +58,10 @@ def create_conversations_module(
         module_clock,
     )
     append_message_handler = AppendConversationMessageHandler(unit_of_work_factory, module_clock)
+    append_assistant_message_handler = AppendAssistantMessageHandler(
+        unit_of_work_factory,
+        module_clock,
+    )
     submit_feedback_handler = SubmitMessageFeedbackHandler(unit_of_work_factory, module_clock)
     get_conversation_handler = GetConversationHandler(unit_of_work_factory)
     list_messages_handler = ListConversationMessagesHandler(unit_of_work_factory)
@@ -61,6 +70,7 @@ def create_conversations_module(
         get_conversation_handler,
         list_messages_handler,
     )
+    conversation_writer = ConversationWriterService(append_assistant_message_handler)
     router = create_conversations_router(
         create_conversation_handler=create_conversation_handler,
         append_message_handler=append_message_handler,
@@ -68,4 +78,8 @@ def create_conversations_module(
         submit_feedback_handler=submit_feedback_handler,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),
     )
-    return ConversationsModule(router=router, conversation_reader=conversation_reader)
+    return ConversationsModule(
+        router=router,
+        conversation_reader=conversation_reader,
+        conversation_writer=conversation_writer,
+    )

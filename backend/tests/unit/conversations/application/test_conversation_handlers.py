@@ -8,6 +8,10 @@ from uuid import UUID
 import pytest
 
 from hify.modules.agents.contracts.dto import AgentVersionInfo
+from hify.modules.conversations.application.commands.append_assistant_message import (
+    AppendAssistantMessageCommand,
+    AppendAssistantMessageHandler,
+)
 from hify.modules.conversations.application.commands.append_conversation_message import (
     AppendConversationMessageCommand,
     AppendConversationMessageHandler,
@@ -308,6 +312,50 @@ async def test_append_message_is_idempotent_and_messages_page_uses_cursor() -> N
     )
     assert page.items == (first,)
     assert not page.has_more
+
+
+@pytest.mark.asyncio
+async def test_append_assistant_message_is_idempotent_by_source_run() -> None:
+    unit_of_work = FakeConversationsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = await CreateConversationHandler(
+        lambda: unit_of_work,
+        FakeAgentCatalog(published_agent_version(actor.team_id)),
+        FixedClock(),
+    ).handle(
+        CreateConversationCommand(
+            actor=actor,
+            agent_id=UUID("00000000-0000-7000-8000-000000000005"),
+            title=None,
+        )
+    )
+    handler = AppendAssistantMessageHandler(lambda: unit_of_work, FixedClock())
+    source_run_id = UUID("00000000-0000-7000-8000-000000000009")
+
+    first = await handler.handle(
+        AppendAssistantMessageCommand(
+            team_id=actor.team_id,
+            conversation_id=conversation.id,
+            content="assistant output",
+            source_run_id=source_run_id,
+            created_by=actor.user_id,
+        )
+    )
+    second = await handler.handle(
+        AppendAssistantMessageCommand(
+            team_id=actor.team_id,
+            conversation_id=conversation.id,
+            content="ignored duplicate output",
+            source_run_id=source_run_id,
+            created_by=actor.user_id,
+        )
+    )
+
+    assert first == second
+    assert first.role == "assistant"
+    assert first.content == "assistant output"
+    assert len(unit_of_work.messages.items) == 1
+    assert unit_of_work.conversations.items[conversation.id].message_count == 1
 
 
 @pytest.mark.asyncio

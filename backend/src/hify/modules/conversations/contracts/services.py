@@ -5,6 +5,7 @@ from uuid import UUID
 
 from hify.modules.conversations.contracts.dto import (
     ConversationInfo,
+    ConversationMessageInfo,
     ConversationMessagePage,
 )
 
@@ -25,3 +26,15 @@ class ConversationReader(Protocol):
         cursor: str | None,
         limit: int,
     ) -> ConversationMessagePage: ...
+
+
+class ConversationWriter(Protocol):
+    async def append_assistant_message(
+        self,
+        *,
+        team_id: UUID,
+        conversation_id: UUID,
+        content: str,
+        source_run_id: UUID,
+        created_by: UUID,
+    ) -> ConversationMessageInfo: ...

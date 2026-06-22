@@ -10,7 +10,7 @@ from uuid import UUID
 from hify.modules.agents.contracts.dto import AgentVersionInfo
 from hify.modules.agents.contracts.services import AgentCatalog
 from hify.modules.conversations.contracts.dto import ConversationMessageInfo
-from hify.modules.conversations.contracts.services import ConversationReader
+from hify.modules.conversations.contracts.services import ConversationReader, ConversationWriter
 from hify.modules.identity.contracts.dto import ActorContext
 from hify.modules.knowledge.contracts.dto import RetrievedChunk
 from hify.modules.knowledge.contracts.services import KnowledgeRetriever
@@ -137,6 +137,7 @@ class RunExecutor:
         self,
         unit_of_work_factory: RunsUnitOfWorkFactory,
         conversation_reader: ConversationReader,
+        conversation_writer: ConversationWriter,
         agent_catalog: AgentCatalog,
         model_gateway: ModelGateway,
         tool_executor: ToolExecutor,
@@ -148,6 +149,7 @@ class RunExecutor:
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._conversation_reader = conversation_reader
+        self._conversation_writer = conversation_writer
         self._agent_catalog = agent_catalog
         self._model_gateway = model_gateway
         self._tool_executor = tool_executor
@@ -204,7 +206,11 @@ class RunExecutor:
                 )
                 stream_result = await self._stream_model_request(run.id, request, context, cancellation)
                 if stream_result.finish_reason != "tool_calls" or not stream_result.tool_calls:
-                    return await self._mark_run_succeeded(run.id, step.id)
+                    return await self._mark_run_succeeded_with_output(
+                        run=run,
+                        step_id=step.id,
+                        output_text=stream_result.output_text,
+                    )
 
                 if iteration_index >= self._max_tool_iterations:
                     return await self._mark_run_failed(
@@ -283,6 +289,7 @@ class RunExecutor:
             workflow_path = _linear_workflow_path(workflow_definition)
             await self._mark_step_succeeded(run.id, workflow_step.id)
             workflow_messages = list(messages)
+            last_output_text = ""
 
             for node in workflow_path:
                 if node.kind in {"start", "end"}:
@@ -313,6 +320,7 @@ class RunExecutor:
                             "workflow llm nodes must not emit model tool calls",
                         )
                     if stream_result.output_text:
+                        last_output_text = stream_result.output_text
                         workflow_messages.append(
                             ModelMessage(role="assistant", content=stream_result.output_text)
                         )
@@ -339,7 +347,11 @@ class RunExecutor:
                 "Workflow end",
                 {},
             )
-            return await self._mark_run_succeeded(run.id, end_step.id)
+            return await self._mark_run_succeeded_with_output(
+                run=run,
+                step_id=end_step.id,
+                output_text=last_output_text,
+            )
         except WorkflowRuntimeUnsupportedDefinitionError as exc:
             return await self._mark_run_failed(
                 run.id,
@@ -740,6 +752,52 @@ class RunExecutor:
             await unit_of_work.runs.save(run)
             await unit_of_work.events.add(step_succeeded_event)
             await unit_of_work.events.add(run_succeeded_event)
+            await unit_of_work.commit()
+        return run_info_from_domain(run)
+
+    async def _mark_run_succeeded_with_output(
+        self,
+        *,
+        run: AgentRun,
+        step_id: UUID,
+        output_text: str,
+    ) -> RunInfo:
+        result = await self._mark_run_succeeded(run.id, step_id)
+        content = output_text.strip()
+        if not content:
+            return result
+
+        try:
+            await self._conversation_writer.append_assistant_message(
+                team_id=run.team_id,
+                conversation_id=run.conversation_id,
+                content=content,
+                source_run_id=run.id,
+                created_by=run.created_by,
+            )
+        except HifyError as exc:
+            return await self._record_assistant_output_write_failed(run.id, exc)
+        return result
+
+    async def _record_assistant_output_write_failed(
+        self,
+        run_id: UUID,
+        error: HifyError,
+    ) -> RunInfo:
+        now = self._clock.now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            run = await _require_run(unit_of_work, run_id)
+            event = run.create_event(
+                event_type=RunEventType.DIAGNOSTIC,
+                payload={
+                    "chunk_type": "assistant_output_write_failed",
+                    "error_code": error.code,
+                    "message": error.message,
+                },
+                now=now,
+            )
+            await unit_of_work.runs.save(run)
+            await unit_of_work.events.add(event)
             await unit_of_work.commit()
         return run_info_from_domain(run)
 
