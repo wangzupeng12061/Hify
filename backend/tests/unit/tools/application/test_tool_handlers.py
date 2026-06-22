@@ -9,6 +9,8 @@ import pytest
 
 from hify.modules.identity.contracts.dto import ActorContext
 from hify.modules.tools.application.commands.create_tool import CreateToolCommand, CreateToolHandler
+from hify.modules.tools.application.executor import ToolRuntimeExecutor
+from hify.modules.tools.application.ports import BuiltinToolInvocation, HttpToolInvocation
 from hify.modules.tools.application.queries.get_tool import (
     GetToolForActorHandler,
     GetToolForActorQuery,
@@ -16,8 +18,14 @@ from hify.modules.tools.application.queries.get_tool import (
     ListToolsForActorHandler,
     ToolCatalogService,
 )
+from hify.modules.tools.contracts.dto import ToolExecutionRequest, ToolExecutionResult
 from hify.modules.tools.domain.entities import ToolDefinition
-from hify.modules.tools.domain.errors import ToolAlreadyExistsError, ToolPermissionDeniedError
+from hify.modules.tools.domain.errors import (
+    ToolAlreadyExistsError,
+    ToolDisabledError,
+    ToolPermissionDeniedError,
+    ToolValidationError,
+)
 from hify.shared.domain.clock import Clock
 
 
@@ -70,6 +78,32 @@ class FakeToolsUnitOfWork:
 
     async def rollback(self) -> None:
         self.rolled_back = True
+
+
+class RecordingBuiltinToolInvoker:
+    def __init__(self) -> None:
+        self.invocations: list[BuiltinToolInvocation] = []
+
+    async def invoke_builtin_tool(self, invocation: BuiltinToolInvocation) -> ToolExecutionResult:
+        self.invocations.append(invocation)
+        return ToolExecutionResult(
+            tool_call_id=invocation.tool_call_id,
+            content="builtin result",
+            metadata={"builtin_name": invocation.builtin_name},
+        )
+
+
+class RecordingHttpToolInvoker:
+    def __init__(self) -> None:
+        self.invocations: list[HttpToolInvocation] = []
+
+    async def invoke_http_tool(self, invocation: HttpToolInvocation) -> ToolExecutionResult:
+        self.invocations.append(invocation)
+        return ToolExecutionResult(
+            tool_call_id=invocation.tool_call_id,
+            content="http result",
+            metadata={"endpoint_url": invocation.endpoint_url},
+        )
 
 
 def actor_with_tool_permissions() -> ActorContext:
@@ -187,3 +221,153 @@ async def test_tool_catalog_and_actor_queries_return_team_tools() -> None:
     assert fetched == created
     assert listed == (created,)
     assert catalog_tool == created
+
+
+@pytest.mark.asyncio
+async def test_tool_executor_invokes_http_tool() -> None:
+    unit_of_work = FakeToolsUnitOfWork()
+    actor = actor_with_tool_permissions()
+    tool = await CreateToolHandler(lambda: unit_of_work, FixedClock()).handle(
+        CreateToolCommand(
+            actor=actor,
+            name="CRM Lookup",
+            description=None,
+            tool_kind="http",
+            input_schema={
+                "type": "object",
+                "required": ["email"],
+                "properties": {"email": {"type": "string"}},
+            },
+            builtin_name=None,
+            endpoint_url="https://crm.example.com/search",
+            http_method="POST",
+            http_headers={"X-Hify-Tool": "crm"},
+        )
+    )
+    http_invoker = RecordingHttpToolInvoker()
+    executor = ToolRuntimeExecutor(
+        lambda: unit_of_work,
+        RecordingBuiltinToolInvoker(),
+        http_invoker,
+    )
+    request = ToolExecutionRequest(
+        team_id=actor.team_id,
+        tool_id=tool.id,
+        tool_call_id=UUID("00000000-0000-7000-8000-000000000010"),
+        arguments={"email": "owner@example.com"},
+    )
+
+    result = await executor.execute_tool(request)
+
+    assert result.content == "http result"
+    assert http_invoker.invocations[0].http_method == "POST"
+    assert http_invoker.invocations[0].arguments == {"email": "owner@example.com"}
+
+
+@pytest.mark.asyncio
+async def test_tool_executor_invokes_builtin_tool() -> None:
+    unit_of_work = FakeToolsUnitOfWork()
+    actor = actor_with_tool_permissions()
+    tool = await CreateToolHandler(lambda: unit_of_work, FixedClock()).handle(
+        CreateToolCommand(
+            actor=actor,
+            name="Search",
+            description=None,
+            tool_kind="builtin",
+            input_schema={"type": "object"},
+            builtin_name="web.search",
+            endpoint_url=None,
+            http_method=None,
+            http_headers={},
+        )
+    )
+    builtin_invoker = RecordingBuiltinToolInvoker()
+    executor = ToolRuntimeExecutor(lambda: unit_of_work, builtin_invoker, RecordingHttpToolInvoker())
+
+    result = await executor.execute_tool(
+        ToolExecutionRequest(
+            team_id=actor.team_id,
+            tool_id=tool.id,
+            tool_call_id=UUID("00000000-0000-7000-8000-000000000010"),
+            arguments={"query": "hify"},
+        )
+    )
+
+    assert result.content == "builtin result"
+    assert builtin_invoker.invocations[0].builtin_name == "web.search"
+
+
+@pytest.mark.asyncio
+async def test_tool_executor_rejects_invalid_arguments() -> None:
+    unit_of_work = FakeToolsUnitOfWork()
+    actor = actor_with_tool_permissions()
+    tool = await CreateToolHandler(lambda: unit_of_work, FixedClock()).handle(
+        CreateToolCommand(
+            actor=actor,
+            name="CRM Lookup",
+            description=None,
+            tool_kind="http",
+            input_schema={
+                "type": "object",
+                "required": ["email"],
+                "properties": {"email": {"type": "string"}},
+            },
+            builtin_name=None,
+            endpoint_url="https://crm.example.com/search",
+            http_method="POST",
+            http_headers={},
+        )
+    )
+    executor = ToolRuntimeExecutor(
+        lambda: unit_of_work,
+        RecordingBuiltinToolInvoker(),
+        RecordingHttpToolInvoker(),
+    )
+
+    with pytest.raises(ToolValidationError):
+        await executor.execute_tool(
+            ToolExecutionRequest(
+                team_id=actor.team_id,
+                tool_id=tool.id,
+                tool_call_id=UUID("00000000-0000-7000-8000-000000000010"),
+                arguments={"email": 123},
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_tool_executor_rejects_disabled_tool() -> None:
+    unit_of_work = FakeToolsUnitOfWork()
+    actor = actor_with_tool_permissions()
+    tool_info = await CreateToolHandler(lambda: unit_of_work, FixedClock()).handle(
+        CreateToolCommand(
+            actor=actor,
+            name="Search",
+            description=None,
+            tool_kind="builtin",
+            input_schema={"type": "object"},
+            builtin_name="web.search",
+            endpoint_url=None,
+            http_method=None,
+            http_headers={},
+        )
+    )
+    tool = await unit_of_work.tools.get_by_id(tool_info.id)
+    assert tool is not None
+    tool.disable(now=FixedClock().now())
+
+    executor = ToolRuntimeExecutor(
+        lambda: unit_of_work,
+        RecordingBuiltinToolInvoker(),
+        RecordingHttpToolInvoker(),
+    )
+
+    with pytest.raises(ToolDisabledError):
+        await executor.execute_tool(
+            ToolExecutionRequest(
+                team_id=actor.team_id,
+                tool_id=tool_info.id,
+                tool_call_id=UUID("00000000-0000-7000-8000-000000000010"),
+                arguments={},
+            )
+        )
