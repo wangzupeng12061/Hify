@@ -151,6 +151,7 @@ class RunExecutor:
             team_id=run.team_id,
             agent_version_id=run.agent_version_id,
         )
+        await self._record_workflow_snapshot(run.id, agent_version)
         messages = list(await self._load_model_messages(run))
         context = CallContext(
             run_id=run.id,
@@ -381,6 +382,36 @@ class RunExecutor:
             event = run.create_event(
                 event_type=_event_type_for_chunk(chunk),
                 payload=_payload_for_chunk(chunk),
+                now=now,
+            )
+            await unit_of_work.runs.save(run)
+            await unit_of_work.events.add(event)
+            await unit_of_work.commit()
+
+    async def _record_workflow_snapshot(
+        self,
+        run_id: UUID,
+        agent_version: AgentVersionInfo,
+    ) -> None:
+        if agent_version.workflow_version_id is None:
+            return
+        now = self._clock.now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            run = await _require_run(unit_of_work, run_id)
+            event = run.create_event(
+                event_type=RunEventType.DIAGNOSTIC,
+                payload={
+                    "chunk_type": "workflow_snapshot",
+                    "workflow_id": (
+                        str(agent_version.workflow_id)
+                        if agent_version.workflow_id is not None
+                        else None
+                    ),
+                    "workflow_version_id": str(agent_version.workflow_version_id),
+                    "workflow_version_number": agent_version.workflow_version_number,
+                    "workflow_name": agent_version.workflow_name,
+                    "workflow_definition": agent_version.workflow_definition or {},
+                },
                 now=now,
             )
             await unit_of_work.runs.save(run)

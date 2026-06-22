@@ -7,9 +7,9 @@ from uuid import UUID
 
 import pytest
 
-from hify.modules.agents.contracts.dto import AgentVersionInfo
 from collections.abc import AsyncIterator
 
+from hify.modules.agents.contracts.dto import AgentVersionInfo
 from hify.modules.conversations.contracts.dto import (
     ConversationInfo,
     ConversationMessageInfo,
@@ -247,6 +247,45 @@ def agent_version_for_conversation(conversation: ConversationInfo) -> AgentVersi
         description=None,
         system_prompt="You are helpful.",
         knowledge_base_ids=(),
+        workflow_id=None,
+        workflow_version_id=None,
+        workflow_version_number=None,
+        workflow_name=None,
+        workflow_definition=None,
+        provider_model_id=UUID("00000000-0000-7000-8000-000000000007"),
+        provider_type="openai",
+        provider_name="OpenAI",
+        model_name="gpt-4.1",
+        model_display_name="GPT 4.1",
+        context_window_tokens=128000,
+        supports_tools=True,
+        supports_vision=False,
+        supports_structured_output=True,
+        created_at=datetime(2026, 6, 22, tzinfo=UTC),
+    )
+
+
+def agent_version_with_workflow(conversation: ConversationInfo) -> AgentVersionInfo:
+    return AgentVersionInfo(
+        id=UUID("00000000-0000-7000-8000-000000000006"),
+        team_id=conversation.team_id,
+        agent_id=conversation.agent_id,
+        version_number=1,
+        name="Support Bot",
+        description=None,
+        system_prompt="You are helpful.",
+        knowledge_base_ids=(),
+        workflow_id=UUID("00000000-0000-7000-8000-000000000010"),
+        workflow_version_id=UUID("00000000-0000-7000-8000-000000000011"),
+        workflow_version_number=2,
+        workflow_name="Support Flow",
+        workflow_definition={
+            "nodes": [
+                {"id": "start", "kind": "start", "config": {}},
+                {"id": "end", "kind": "end", "config": {}},
+            ],
+            "edges": [{"source_node_id": "start", "target_node_id": "end"}],
+        },
         provider_model_id=UUID("00000000-0000-7000-8000-000000000007"),
         provider_type="openai",
         provider_name="OpenAI",
@@ -363,6 +402,34 @@ async def test_create_run_uses_conversation_and_latest_agent_version() -> None:
     assert run.agent_version_id == UUID("00000000-0000-7000-8000-000000000006")
     assert run.event_count == 1
     assert unit_of_work.committed
+
+
+@pytest.mark.asyncio
+async def test_create_run_records_workflow_version_payload_when_bound() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    agent_version = agent_version_with_workflow(conversation)
+    handler = CreateRunHandler(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation),
+        FakeAgentCatalog(agent_version),
+        FixedClock(),
+    )
+
+    await handler.handle(
+        CreateRunCommand(
+            actor=actor,
+            conversation_id=conversation.id,
+            idempotency_key="run-1",
+        )
+    )
+
+    event = next(iter(unit_of_work.events.items.values()))
+    assert event.payload["workflow_id"] == str(agent_version.workflow_id)
+    assert event.payload["workflow_version_id"] == str(agent_version.workflow_version_id)
+    assert event.payload["workflow_version_number"] == agent_version.workflow_version_number
+    assert event.payload["workflow_name"] == "Support Flow"
 
 
 @pytest.mark.asyncio
@@ -561,6 +628,45 @@ async def test_run_executor_streams_model_chunks_into_run_events() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_executor_records_workflow_snapshot_without_executing_workflow() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    run = await _create_run(unit_of_work, actor)
+    agent_version = agent_version_with_workflow(conversation)
+    gateway = RecordingModelGateway((DoneChunk(chunk_type="done", finish_reason="stop"),))
+    executor = RunExecutor(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation),
+        FakeAgentCatalog(agent_version),
+        gateway,
+        RecordingToolExecutor(),
+        RecordingKnowledgeRetriever(),
+        FixedClock(),
+    )
+
+    result = await executor.execute(ExecuteRunCommand(run_id=run.id))
+    events = await unit_of_work.events.list_by_run(
+        run_id=run.id,
+        after_sequence_number=None,
+        limit=20,
+    )
+    workflow_events = [
+        event
+        for event in events
+        if event.payload.get("chunk_type") == "workflow_snapshot"
+    ]
+
+    assert result.status == "succeeded"
+    assert len(gateway.requests) == 1
+    assert len(workflow_events) == 1
+    assert workflow_events[0].payload["workflow_version_id"] == str(
+        agent_version.workflow_version_id
+    )
+    assert workflow_events[0].payload["workflow_definition"] == agent_version.workflow_definition
+
+
+@pytest.mark.asyncio
 async def test_run_executor_marks_run_failed_on_provider_error() -> None:
     unit_of_work = FakeRunsUnitOfWork()
     actor = actor_with_run_permissions()
@@ -634,6 +740,11 @@ async def test_run_executor_retrieves_knowledge_and_injects_context() -> None:
         description=None,
         system_prompt="You are helpful.",
         knowledge_base_ids=(knowledge_base_id,),
+        workflow_id=None,
+        workflow_version_id=None,
+        workflow_version_number=None,
+        workflow_name=None,
+        workflow_definition=None,
         provider_model_id=UUID("00000000-0000-7000-8000-000000000007"),
         provider_type="openai",
         provider_name="OpenAI",

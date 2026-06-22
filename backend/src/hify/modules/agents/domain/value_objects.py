@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 from enum import StrEnum
 from uuid import UUID
 
@@ -73,3 +74,18 @@ class ModelBindingSnapshot:
     def __post_init__(self) -> None:
         if self.context_window_tokens < 1:
             raise AgentValidationError("model context window tokens must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowBindingSnapshot:
+    workflow_id: UUID
+    workflow_version_id: UUID
+    workflow_version_number: int
+    workflow_name: str
+    workflow_definition: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        if self.workflow_version_number < 1:
+            raise AgentValidationError("workflow version number must be positive")
+        if not self.workflow_name.strip():
+            raise AgentValidationError("workflow name must not be blank")

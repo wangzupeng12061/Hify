@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, String, Text, text
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -60,6 +60,7 @@ class AgentModel(Base):
         default=list,
         server_default=text("'{}'::uuid[]"),
     )
+    workflow_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=AgentStatus.DRAFT.value)
     latest_version_number: Mapped[int] = mapped_column(
         BigInteger,
@@ -138,6 +139,14 @@ class AgentVersionModel(Base):
         default=list,
         server_default=text("'{}'::uuid[]"),
     )
+    workflow_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    workflow_version_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=True,
+    )
+    workflow_version_number: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    workflow_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    workflow_definition: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     provider_model_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
     provider_type: Mapped[str] = mapped_column(String(32), nullable=False)
     provider_name: Mapped[str] = mapped_column(Text, nullable=False)

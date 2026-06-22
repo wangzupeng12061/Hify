@@ -6,12 +6,16 @@ from uuid import UUID
 from hify.modules.agents.application.authorization import require_manage_agents
 from hify.modules.agents.application.dto import agent_version_info_from_domain
 from hify.modules.agents.application.model_binding import model_binding_snapshot_from_model_info
+from hify.modules.agents.application.workflow_binding import (
+    workflow_binding_snapshot_from_workflow_version,
+)
 from hify.modules.agents.application.ports import AgentsUnitOfWorkFactory
 from hify.modules.agents.contracts.dto import AgentVersionInfo
 from hify.modules.agents.domain.errors import AgentNotFoundError
 from hify.modules.identity.contracts.dto import ActorContext
 from hify.modules.knowledge.contracts.services import KnowledgeBaseCatalog
 from hify.modules.providers.contracts.services import ModelCatalog
+from hify.modules.workflows.contracts.services import WorkflowCatalog
 from hify.shared.domain.clock import Clock
 
 
@@ -27,11 +31,13 @@ class PublishAgentHandler:
         unit_of_work_factory: AgentsUnitOfWorkFactory,
         model_catalog: ModelCatalog,
         knowledge_base_catalog: KnowledgeBaseCatalog,
+        workflow_catalog: WorkflowCatalog,
         clock: Clock,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._model_catalog = model_catalog
         self._knowledge_base_catalog = knowledge_base_catalog
+        self._workflow_catalog = workflow_catalog
         self._clock = clock
 
     async def handle(self, command: PublishAgentCommand) -> AgentVersionInfo:
@@ -52,9 +58,19 @@ class PublishAgentHandler:
                     team_id=command.actor.team_id,
                     knowledge_base_id=knowledge_base_id,
                 )
+            workflow_snapshot = None
+            if agent.workflow_id is not None:
+                workflow_version = await self._workflow_catalog.get_latest_published_version(
+                    team_id=command.actor.team_id,
+                    workflow_id=agent.workflow_id,
+                )
+                workflow_snapshot = workflow_binding_snapshot_from_workflow_version(
+                    workflow_version
+                )
             model_snapshot = model_binding_snapshot_from_model_info(model)
             agent_version = agent.publish(
                 model_snapshot=model_snapshot,
+                workflow_snapshot=workflow_snapshot,
                 published_by=command.actor.user_id,
                 now=now,
             )

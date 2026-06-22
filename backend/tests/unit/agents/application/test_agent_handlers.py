@@ -23,6 +23,7 @@ from hify.modules.agents.domain.errors import (
 from hify.modules.identity.contracts.dto import ActorContext
 from hify.modules.knowledge.contracts.dto import KnowledgeBaseInfo
 from hify.modules.providers.contracts.dto import ModelInfo
+from hify.modules.workflows.contracts.dto import WorkflowVersionInfo
 from hify.shared.domain.clock import Clock
 
 
@@ -69,6 +70,37 @@ class FakeKnowledgeBaseCatalog:
             created_at=datetime(2026, 6, 22, tzinfo=UTC),
             updated_at=datetime(2026, 6, 22, tzinfo=UTC),
         )
+
+
+class FakeWorkflowCatalog:
+    def __init__(self, workflow_version: WorkflowVersionInfo | None = None) -> None:
+        self.workflow_version = workflow_version
+        self.requests: list[tuple[UUID, UUID]] = []
+
+    async def get_latest_published_version(
+        self,
+        *,
+        team_id: UUID,
+        workflow_id: UUID,
+    ) -> WorkflowVersionInfo:
+        self.requests.append((team_id, workflow_id))
+        if self.workflow_version is None:
+            raise AssertionError("workflow catalog should not be called")
+        assert team_id == self.workflow_version.team_id
+        assert workflow_id == self.workflow_version.workflow_id
+        return self.workflow_version
+
+    async def get_workflow_version(
+        self,
+        *,
+        team_id: UUID,
+        workflow_version_id: UUID,
+    ) -> WorkflowVersionInfo:
+        if self.workflow_version is None:
+            raise AssertionError("workflow catalog should not be called")
+        assert team_id == self.workflow_version.team_id
+        assert workflow_version_id == self.workflow_version.id
+        return self.workflow_version
 
 
 class FakeAgentRepository:
@@ -159,6 +191,25 @@ def active_chat_model(team_id: UUID) -> ModelInfo:
         supports_tools=True,
         supports_vision=True,
         supports_structured_output=True,
+    )
+
+
+def published_workflow_version(team_id: UUID) -> WorkflowVersionInfo:
+    return WorkflowVersionInfo(
+        id=UUID("00000000-0000-7000-8000-000000000011"),
+        team_id=team_id,
+        workflow_id=UUID("00000000-0000-7000-8000-000000000010"),
+        version_number=3,
+        name="Support Flow",
+        description=None,
+        definition={
+            "nodes": [
+                {"id": "start", "kind": "start", "config": {}},
+                {"id": "end", "kind": "end", "config": {}},
+            ],
+            "edges": [{"source_node_id": "start", "target_node_id": "end"}],
+        },
+        created_at=datetime(2026, 6, 22, tzinfo=UTC),
     )
 
 
@@ -285,6 +336,7 @@ async def test_publish_agent_creates_version_and_catalog_returns_it() -> None:
         lambda: unit_of_work,
         model_catalog,
         knowledge_base_catalog,
+        FakeWorkflowCatalog(),
         FixedClock(),
     )
 
@@ -309,3 +361,45 @@ async def test_publish_agent_creates_version_and_catalog_returns_it() -> None:
         (actor.team_id, knowledge_base_id),
     ]
     assert latest == fetched == agent_version
+
+
+@pytest.mark.asyncio
+async def test_publish_agent_snapshots_bound_workflow_version() -> None:
+    unit_of_work = FakeAgentsUnitOfWork()
+    actor = actor_with_agent_permission()
+    model_catalog = FakeModelCatalog(active_chat_model(actor.team_id))
+    workflow_version = published_workflow_version(actor.team_id)
+    workflow_catalog = FakeWorkflowCatalog(workflow_version)
+    create_handler = CreateAgentHandler(
+        lambda: unit_of_work,
+        model_catalog,
+        FakeKnowledgeBaseCatalog(),
+        FixedClock(),
+    )
+    agent = await create_handler.handle(
+        CreateAgentCommand(
+            actor=actor,
+            name="Support Bot",
+            description=None,
+            system_prompt="You are helpful.",
+            provider_model_id=model_catalog.model.id,
+            workflow_id=workflow_version.workflow_id,
+        )
+    )
+    publish_handler = PublishAgentHandler(
+        lambda: unit_of_work,
+        model_catalog,
+        FakeKnowledgeBaseCatalog(),
+        workflow_catalog,
+        FixedClock(),
+    )
+
+    agent_version = await publish_handler.handle(PublishAgentCommand(actor=actor, agent_id=agent.id))
+
+    assert agent.workflow_id == workflow_version.workflow_id
+    assert agent_version.workflow_id == workflow_version.workflow_id
+    assert agent_version.workflow_version_id == workflow_version.id
+    assert agent_version.workflow_version_number == workflow_version.version_number
+    assert agent_version.workflow_name == "Support Flow"
+    assert agent_version.workflow_definition == workflow_version.definition
+    assert workflow_catalog.requests == [(actor.team_id, workflow_version.workflow_id)]

@@ -27,6 +27,7 @@ class SqlAlchemyAgentRepository:
         model.system_prompt = agent.system_prompt
         model.provider_model_id = agent.provider_model_id
         model.knowledge_base_ids = list(agent.knowledge_base_ids)
+        model.workflow_id = agent.workflow_id
         model.status = agent.status.value
         model.latest_version_number = agent.latest_version_number
         model.version = agent.version
@@ -84,6 +85,7 @@ def _agent_to_model(agent: Agent) -> AgentModel:
         system_prompt=agent.system_prompt,
         provider_model_id=agent.provider_model_id,
         knowledge_base_ids=list(agent.knowledge_base_ids),
+        workflow_id=agent.workflow_id,
         status=agent.status.value,
         latest_version_number=agent.latest_version_number,
         version=agent.version,
@@ -102,6 +104,7 @@ def _agent_from_model(model: AgentModel) -> Agent:
         system_prompt=model.system_prompt,
         provider_model_id=model.provider_model_id,
         knowledge_base_ids=tuple(model.knowledge_base_ids),
+        workflow_id=model.workflow_id,
         status=AgentStatus(model.status),
         latest_version_number=model.latest_version_number,
         version=model.version,
@@ -121,6 +124,15 @@ def _agent_version_to_model(agent_version: AgentVersion) -> AgentVersionModel:
         description=agent_version.description,
         system_prompt=agent_version.system_prompt,
         knowledge_base_ids=list(agent_version.knowledge_base_ids),
+        workflow_id=agent_version.workflow_id,
+        workflow_version_id=agent_version.workflow_version_id,
+        workflow_version_number=agent_version.workflow_version_number,
+        workflow_name=agent_version.workflow_name,
+        workflow_definition=(
+            dict(agent_version.workflow_definition)
+            if agent_version.workflow_definition is not None
+            else None
+        ),
         provider_model_id=agent_version.provider_model_id,
         provider_type=agent_version.provider_type,
         provider_name=agent_version.provider_name,
@@ -145,6 +157,13 @@ def _agent_version_from_model(model: AgentVersionModel) -> AgentVersion:
         description=model.description,
         system_prompt=model.system_prompt,
         knowledge_base_ids=tuple(model.knowledge_base_ids),
+        workflow_id=model.workflow_id,
+        workflow_version_id=model.workflow_version_id,
+        workflow_version_number=model.workflow_version_number,
+        workflow_name=model.workflow_name,
+        workflow_definition=(
+            dict(model.workflow_definition) if model.workflow_definition is not None else None
+        ),
         provider_model_id=model.provider_model_id,
         provider_type=model.provider_type,
         provider_name=model.provider_name,
