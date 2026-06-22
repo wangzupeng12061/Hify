@@ -21,6 +21,7 @@ from hify.modules.runs.application.queries.list_run_events import (
 )
 from hify.modules.runs.contracts.services import RunReader
 from hify.modules.runs.infrastructure.database.uow import SqlAlchemyRunsUnitOfWork
+from hify.modules.tools.contracts.services import ToolExecutor
 from hify.shared.domain.clock import Clock, SystemClock
 
 
@@ -37,6 +38,7 @@ def create_runs_module(
     conversation_reader: ConversationReader,
     agent_catalog: AgentCatalog,
     model_gateway: ModelGateway,
+    tool_executor: ToolExecutor,
     clock: Clock | None = None,
 ) -> RunsModule:
     module_clock = clock or SystemClock()
@@ -61,6 +63,7 @@ def create_runs_module(
         conversation_reader,
         agent_catalog,
         model_gateway,
+        tool_executor,
         module_clock,
     )
     router = create_runs_router(
