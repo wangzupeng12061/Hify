@@ -18,6 +18,7 @@ from hify.modules.agents.contracts.services import AgentCatalog
 from hify.modules.agents.infrastructure.database.uow import SqlAlchemyAgentsUnitOfWork
 from hify.modules.knowledge.contracts.services import KnowledgeBaseCatalog
 from hify.modules.providers.contracts.services import ModelCatalog
+from hify.modules.workflows.contracts.services import WorkflowCatalog
 from hify.shared.domain.clock import Clock, SystemClock
 
 
@@ -32,6 +33,7 @@ def create_agents_module(
     *,
     model_catalog: ModelCatalog,
     knowledge_base_catalog: KnowledgeBaseCatalog,
+    workflow_catalog: WorkflowCatalog,
     clock: Clock | None = None,
 ) -> AgentsModule:
     module_clock = clock or SystemClock()
@@ -49,6 +51,7 @@ def create_agents_module(
         unit_of_work_factory,
         model_catalog,
         knowledge_base_catalog,
+        workflow_catalog,
         module_clock,
     )
     get_agent_version_handler = GetAgentVersionHandler(unit_of_work_factory)

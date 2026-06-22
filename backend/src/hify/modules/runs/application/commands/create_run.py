@@ -72,6 +72,7 @@ class CreateRunHandler:
                     "conversation_id": str(conversation.id),
                     "agent_id": str(conversation.agent_id),
                     "agent_version_id": str(agent_version.id),
+                    **_workflow_version_payload(agent_version),
                 },
                 now=now,
             )
@@ -80,3 +81,20 @@ class CreateRunHandler:
             await unit_of_work.commit()
 
         return run_info_from_domain(run)
+
+
+def _workflow_version_payload(agent_version: object) -> dict[str, object]:
+    workflow_version_id = getattr(agent_version, "workflow_version_id", None)
+    if workflow_version_id is None:
+        return {}
+    payload: dict[str, object] = {"workflow_version_id": str(workflow_version_id)}
+    workflow_id = getattr(agent_version, "workflow_id", None)
+    workflow_version_number = getattr(agent_version, "workflow_version_number", None)
+    workflow_name = getattr(agent_version, "workflow_name", None)
+    if workflow_id is not None:
+        payload["workflow_id"] = str(workflow_id)
+    if workflow_version_number is not None:
+        payload["workflow_version_number"] = workflow_version_number
+    if workflow_name is not None:
+        payload["workflow_name"] = workflow_name
+    return payload

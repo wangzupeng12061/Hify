@@ -12,6 +12,7 @@ class CreateAgentRequest(BaseModel):
     system_prompt: str = Field(min_length=1, max_length=20000)
     provider_model_id: UUID
     knowledge_base_ids: tuple[UUID, ...] = Field(default_factory=tuple, max_length=10)
+    workflow_id: UUID | None = None
 
 
 class AgentResponse(BaseModel):
@@ -24,6 +25,7 @@ class AgentResponse(BaseModel):
     status: str
     provider_model_id: UUID
     knowledge_base_ids: tuple[UUID, ...]
+    workflow_id: UUID | None
     latest_version_number: int
     created_at: datetime
     updated_at: datetime
@@ -40,6 +42,11 @@ class AgentVersionResponse(BaseModel):
     description: str | None
     system_prompt: str
     knowledge_base_ids: tuple[UUID, ...]
+    workflow_id: UUID | None
+    workflow_version_id: UUID | None
+    workflow_version_number: int | None
+    workflow_name: str | None
+    workflow_definition: dict[str, object] | None
     provider_model_id: UUID
     provider_type: str
     provider_name: str

@@ -25,6 +25,7 @@ class CreateAgentCommand:
     system_prompt: str
     provider_model_id: UUID
     knowledge_base_ids: tuple[UUID, ...] = ()
+    workflow_id: UUID | None = None
 
 
 class CreateAgentHandler:
@@ -70,6 +71,7 @@ class CreateAgentHandler:
                 system_prompt=command.system_prompt,
                 provider_model_id=command.provider_model_id,
                 knowledge_base_ids=command.knowledge_base_ids,
+                workflow_id=command.workflow_id,
                 created_by=command.actor.user_id,
                 now=now,
             )

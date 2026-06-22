@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Mapping
 from uuid import UUID
 
 
@@ -14,6 +15,7 @@ class AgentInfo:
     status: str
     provider_model_id: UUID
     knowledge_base_ids: tuple[UUID, ...]
+    workflow_id: UUID | None
     latest_version_number: int
     created_at: datetime
     updated_at: datetime
@@ -29,6 +31,11 @@ class AgentVersionInfo:
     description: str | None
     system_prompt: str
     knowledge_base_ids: tuple[UUID, ...]
+    workflow_id: UUID | None
+    workflow_version_id: UUID | None
+    workflow_version_number: int | None
+    workflow_name: str | None
+    workflow_definition: Mapping[str, object] | None
     provider_model_id: UUID
     provider_type: str
     provider_name: str
