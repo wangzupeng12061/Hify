@@ -47,6 +47,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         session_factory,
         conversation_reader=conversations.conversation_reader,
         agent_catalog=agents.agent_catalog,
+        model_gateway=providers.model_gateway,
     )
     return HifyContainer(
         settings=resolved_settings,

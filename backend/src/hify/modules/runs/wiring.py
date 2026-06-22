@@ -7,10 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hify.modules.agents.contracts.services import AgentCatalog
 from hify.modules.conversations.contracts.services import ConversationReader
+from hify.modules.providers.contracts.services import ModelGateway
 from hify.modules.runs.api.dependencies import AuthenticationNotConfiguredAuthenticator
 from hify.modules.runs.api.router import create_runs_router
 from hify.modules.runs.application.commands.cancel_run import CancelRunHandler
 from hify.modules.runs.application.commands.create_run import CreateRunHandler
+from hify.modules.runs.application.executor import RunExecutor
 from hify.modules.runs.application.queries.get_run import GetRunForActorHandler, GetRunHandler
 from hify.modules.runs.application.queries.list_run_events import (
     ListRunEventsForActorHandler,
@@ -26,6 +28,7 @@ from hify.shared.domain.clock import Clock, SystemClock
 class RunsModule:
     router: APIRouter
     run_reader: RunReader
+    run_executor: RunExecutor
 
 
 def create_runs_module(
@@ -33,6 +36,7 @@ def create_runs_module(
     *,
     conversation_reader: ConversationReader,
     agent_catalog: AgentCatalog,
+    model_gateway: ModelGateway,
     clock: Clock | None = None,
 ) -> RunsModule:
     module_clock = clock or SystemClock()
@@ -52,6 +56,13 @@ def create_runs_module(
     list_events_handler = ListRunEventsHandler(unit_of_work_factory)
     list_events_for_actor_handler = ListRunEventsForActorHandler(list_events_handler)
     run_reader = RunReaderService(get_run_handler, list_events_handler)
+    run_executor = RunExecutor(
+        unit_of_work_factory,
+        conversation_reader,
+        agent_catalog,
+        model_gateway,
+        module_clock,
+    )
     router = create_runs_router(
         create_run_handler=create_run_handler,
         cancel_run_handler=cancel_run_handler,
@@ -59,4 +70,4 @@ def create_runs_module(
         list_events_handler=list_events_for_actor_handler,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),
     )
-    return RunsModule(router=router, run_reader=run_reader)
+    return RunsModule(router=router, run_reader=run_reader, run_executor=run_executor)

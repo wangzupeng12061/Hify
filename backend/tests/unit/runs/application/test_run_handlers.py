@@ -8,11 +8,31 @@ from uuid import UUID
 import pytest
 
 from hify.modules.agents.contracts.dto import AgentVersionInfo
-from hify.modules.conversations.contracts.dto import ConversationInfo, ConversationMessagePage
+from collections.abc import AsyncIterator
+
+from hify.modules.conversations.contracts.dto import (
+    ConversationInfo,
+    ConversationMessageInfo,
+    ConversationMessagePage,
+)
 from hify.modules.identity.contracts.dto import ActorContext
+from hify.modules.providers.contracts.dto import (
+    CallContext,
+    DoneChunk,
+    ModelChunk,
+    ModelRequest,
+    TextDeltaChunk,
+    UsageChunk,
+    ModelUsage,
+)
+from hify.modules.providers.contracts.errors import (
+    ProviderStreamInterruptedError,
+    ProviderUnavailableError,
+)
 from hify.modules.runs.contracts.dto import RunInfo
 from hify.modules.runs.application.commands.cancel_run import CancelRunCommand, CancelRunHandler
 from hify.modules.runs.application.commands.create_run import CreateRunCommand, CreateRunHandler
+from hify.modules.runs.application.executor import ExecuteRunCommand, RunExecutor
 from hify.modules.runs.application.queries.get_run import (
     GetRunForActorHandler,
     GetRunForActorQuery,
@@ -35,8 +55,13 @@ class FixedClock(Clock):
 
 
 class FakeConversationReader:
-    def __init__(self, conversation: ConversationInfo) -> None:
+    def __init__(
+        self,
+        conversation: ConversationInfo,
+        messages: tuple[ConversationMessageInfo, ...] = (),
+    ) -> None:
         self.conversation = conversation
+        self.messages = messages
 
     async def get_conversation(self, *, team_id: UUID, conversation_id: UUID) -> ConversationInfo:
         assert team_id == self.conversation.team_id
@@ -55,7 +80,7 @@ class FakeConversationReader:
         assert conversation_id == self.conversation.id
         assert cursor is None
         assert limit > 0
-        return ConversationMessagePage(items=(), next_cursor=None, has_more=False)
+        return ConversationMessagePage(items=self.messages, next_cursor=None, has_more=False)
 
 
 class FakeAgentCatalog:
@@ -118,6 +143,9 @@ class FakeStepRepository:
         self.items: dict[UUID, RunStep] = {}
 
     async def add(self, step: RunStep) -> None:
+        self.items[step.id] = step
+
+    async def save(self, step: RunStep) -> None:
         self.items[step.id] = step
 
     async def get_by_id(self, step_id: UUID) -> RunStep | None:
@@ -225,6 +253,29 @@ def agent_version_for_conversation(conversation: ConversationInfo) -> AgentVersi
         supports_structured_output=True,
         created_at=datetime(2026, 6, 22, tzinfo=UTC),
     )
+
+
+class RecordingModelGateway:
+    def __init__(self, chunks: tuple[ModelChunk, ...], error: Exception | None = None) -> None:
+        self.chunks = chunks
+        self.error = error
+        self.requests: list[ModelRequest] = []
+        self.contexts: list[CallContext] = []
+
+    def stream(
+        self,
+        request: ModelRequest,
+        context: CallContext,
+    ) -> AsyncIterator[ModelChunk]:
+        self.requests.append(request)
+        self.contexts.append(context)
+        return self._stream()
+
+    async def _stream(self) -> AsyncIterator[ModelChunk]:
+        for chunk in self.chunks:
+            yield chunk
+        if self.error is not None:
+            raise self.error
 
 
 @pytest.mark.asyncio
@@ -390,6 +441,104 @@ async def test_event_pagination_uses_cursor() -> None:
     assert page.has_more
     assert page.next_cursor == "1"
     assert next_page.items[0].sequence_number == 2
+
+
+@pytest.mark.asyncio
+async def test_run_executor_streams_model_chunks_into_run_events() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    message = ConversationMessageInfo(
+        id=UUID("00000000-0000-7000-8000-000000000008"),
+        team_id=actor.team_id,
+        conversation_id=conversation.id,
+        sequence_number=1,
+        role="user",
+        content="Hello",
+        status="created",
+        created_at=datetime(2026, 6, 22, tzinfo=UTC),
+    )
+    run = await _create_run(unit_of_work, actor)
+    gateway = RecordingModelGateway(
+        (
+            TextDeltaChunk(chunk_type="text_delta", text="Hi"),
+            UsageChunk(chunk_type="usage", usage=ModelUsage(input_tokens=1, output_tokens=1)),
+            DoneChunk(chunk_type="done", finish_reason="stop"),
+        )
+    )
+    executor = RunExecutor(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation, (message,)),
+        FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        gateway,
+        FixedClock(),
+    )
+
+    result = await executor.execute(ExecuteRunCommand(run_id=run.id))
+    events = await unit_of_work.events.list_by_run(
+        run_id=run.id,
+        after_sequence_number=None,
+        limit=20,
+    )
+    steps = await unit_of_work.steps.list_by_run(run_id=run.id)
+
+    assert result.status == "succeeded"
+    assert gateway.requests[0].messages[0].content == "Hello"
+    assert gateway.requests[0].system_prompt == "You are helpful."
+    assert steps[0].status.value == "succeeded"
+    assert [event.event_type.value for event in events] == [
+        "run.created",
+        "run.started",
+        "step.started",
+        "output.text_delta",
+        "diagnostic",
+        "diagnostic",
+        "step.succeeded",
+        "run.succeeded",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_executor_marks_run_failed_on_provider_error() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    run = await _create_run(unit_of_work, actor)
+    executor = RunExecutor(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation),
+        FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        RecordingModelGateway((), ProviderUnavailableError("model unavailable")),
+        FixedClock(),
+    )
+
+    result = await executor.execute(ExecuteRunCommand(run_id=run.id))
+
+    assert result.status == "failed"
+    assert result.error_code == "PROVIDER_UNAVAILABLE_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_run_executor_marks_run_interrupted_after_stream_interruption() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    run = await _create_run(unit_of_work, actor)
+    executor = RunExecutor(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation),
+        FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        RecordingModelGateway(
+            (TextDeltaChunk(chunk_type="text_delta", text="partial"),),
+            ProviderStreamInterruptedError("stream interrupted"),
+        ),
+        FixedClock(),
+    )
+
+    result = await executor.execute(ExecuteRunCommand(run_id=run.id))
+
+    assert result.status == "interrupted"
+    assert result.error_code == "PROVIDER_STREAM_INTERRUPTED_ERROR"
 
 
 async def _create_run(unit_of_work: FakeRunsUnitOfWork, actor: ActorContext) -> RunInfo:
