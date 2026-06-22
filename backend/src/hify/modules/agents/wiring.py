@@ -16,6 +16,7 @@ from hify.modules.agents.application.queries.get_agent_version import (
 )
 from hify.modules.agents.contracts.services import AgentCatalog
 from hify.modules.agents.infrastructure.database.uow import SqlAlchemyAgentsUnitOfWork
+from hify.modules.knowledge.contracts.services import KnowledgeBaseCatalog
 from hify.modules.providers.contracts.services import ModelCatalog
 from hify.shared.domain.clock import Clock, SystemClock
 
@@ -30,6 +31,7 @@ def create_agents_module(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     model_catalog: ModelCatalog,
+    knowledge_base_catalog: KnowledgeBaseCatalog,
     clock: Clock | None = None,
 ) -> AgentsModule:
     module_clock = clock or SystemClock()
@@ -37,8 +39,18 @@ def create_agents_module(
     def unit_of_work_factory() -> SqlAlchemyAgentsUnitOfWork:
         return SqlAlchemyAgentsUnitOfWork(session_factory)
 
-    create_agent_handler = CreateAgentHandler(unit_of_work_factory, model_catalog, module_clock)
-    publish_agent_handler = PublishAgentHandler(unit_of_work_factory, model_catalog, module_clock)
+    create_agent_handler = CreateAgentHandler(
+        unit_of_work_factory,
+        model_catalog,
+        knowledge_base_catalog,
+        module_clock,
+    )
+    publish_agent_handler = PublishAgentHandler(
+        unit_of_work_factory,
+        model_catalog,
+        knowledge_base_catalog,
+        module_clock,
+    )
     get_agent_version_handler = GetAgentVersionHandler(unit_of_work_factory)
     get_latest_published_agent_version_handler = GetLatestPublishedAgentVersionHandler(
         unit_of_work_factory

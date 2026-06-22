@@ -340,6 +340,7 @@ async def test_retriever_embeds_query_and_returns_ranked_chunks() -> None:
         knowledge_base_ids=(knowledge_base.id,),
         query="restart api",
         limit=3,
+        deadline=123.0,
     )
 
     assert len(chunks) == 1

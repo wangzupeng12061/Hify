@@ -41,6 +41,7 @@ def create_agents_router(
                 description=request.description,
                 system_prompt=request.system_prompt,
                 provider_model_id=request.provider_model_id,
+                knowledge_base_ids=request.knowledge_base_ids,
             )
             agent = await create_agent_handler.handle(command)
             return AgentResponse.model_validate(agent)

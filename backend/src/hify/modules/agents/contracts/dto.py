@@ -13,6 +13,7 @@ class AgentInfo:
     description: str | None
     status: str
     provider_model_id: UUID
+    knowledge_base_ids: tuple[UUID, ...]
     latest_version_number: int
     created_at: datetime
     updated_at: datetime
@@ -27,6 +28,7 @@ class AgentVersionInfo:
     name: str
     description: str | None
     system_prompt: str
+    knowledge_base_ids: tuple[UUID, ...]
     provider_model_id: UUID
     provider_type: str
     provider_name: str
