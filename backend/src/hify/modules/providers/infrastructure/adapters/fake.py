@@ -3,13 +3,19 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from time import monotonic
 
-from hify.modules.providers.contracts.dto import CallContext, ModelChunk, ModelRequest
+from hify.modules.providers.contracts.dto import (
+    CallContext,
+    EmbeddingRequest,
+    EmbeddingResult,
+    ModelChunk,
+    ModelRequest,
+)
 from hify.modules.providers.contracts.errors import (
     ProviderCancelledError,
     ProviderTimeoutError,
     ProviderUnavailableError,
 )
-from hify.modules.providers.contracts.services import ModelGateway
+from hify.modules.providers.contracts.services import EmbeddingGateway, ModelGateway
 
 
 class MissingModelGateway(ModelGateway):
@@ -30,6 +36,13 @@ class MissingModelGateway(ModelGateway):
         raise ProviderUnavailableError("model gateway is not configured")
         if False:
             yield
+
+
+class MissingEmbeddingGateway(EmbeddingGateway):
+    async def embed(self, request: EmbeddingRequest, context: CallContext) -> EmbeddingResult:
+        _ = request
+        _ = context
+        raise ProviderUnavailableError("embedding gateway is not configured")
 
 
 class StaticModelGateway(ModelGateway):

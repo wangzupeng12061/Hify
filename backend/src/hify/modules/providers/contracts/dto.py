@@ -74,6 +74,17 @@ class ModelRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class EmbeddingRequest:
+    model_id: UUID
+    input_texts: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingResult:
+    embeddings: tuple[tuple[float, ...], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ModelUsage:
     input_tokens: int
     output_tokens: int
