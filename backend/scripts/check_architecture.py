@@ -50,6 +50,7 @@ ALLOWED_SYNC_DEPENDENCIES = {
         "knowledge",
         "workflows",
         "tools",
+        "usage",
     },
     "usage": {"identity"},
 }

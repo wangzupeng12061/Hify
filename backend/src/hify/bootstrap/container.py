@@ -14,6 +14,7 @@ from hify.modules.mcp.wiring import McpModule, create_mcp_module
 from hify.modules.providers.wiring import ProvidersModule, create_providers_module
 from hify.modules.runs.wiring import RunsModule, create_runs_module
 from hify.modules.tools.wiring import ToolsModule, create_tools_module
+from hify.modules.usage.wiring import UsageModule, create_usage_module
 from hify.modules.workflows.wiring import WorkflowsModule, create_workflows_module
 from hify.shared.infrastructure.database import create_engine, create_session_factory
 
@@ -32,6 +33,7 @@ class HifyContainer:
     mcp: McpModule
     runs: RunsModule
     tools: ToolsModule
+    usage: UsageModule
     workflows: WorkflowsModule
 
 
@@ -75,6 +77,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         session_factory,
         agent_catalog=agents.agent_catalog,
     )
+    usage = create_usage_module(session_factory)
     runs = create_runs_module(
         session_factory,
         conversation_reader=conversations.conversation_reader,
@@ -83,6 +86,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         model_gateway=providers.model_gateway,
         tool_executor=tools.tool_executor,
         knowledge_retriever=knowledge.knowledge_retriever,
+        usage_recorder=usage.usage_recorder,
     )
     return HifyContainer(
         settings=resolved_settings,
@@ -97,5 +101,6 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         mcp=mcp,
         runs=runs,
         tools=tools,
+        usage=usage,
         workflows=workflows,
     )
