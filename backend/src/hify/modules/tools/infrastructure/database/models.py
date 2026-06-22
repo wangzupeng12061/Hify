@@ -18,7 +18,7 @@ class ToolDefinitionModel(Base):
     __tablename__ = "tools_definitions"
     __table_args__ = (
         CheckConstraint(
-            "tool_kind IN ('builtin', 'http')",
+            "tool_kind IN ('builtin', 'http', 'mcp')",
             name="ck_tools_definitions__tool_kind",
         ),
         CheckConstraint(
@@ -71,6 +71,9 @@ class ToolDefinitionModel(Base):
         nullable=False,
         server_default=text("'{}'::jsonb"),
     )
+    mcp_server_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    mcp_tool_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    mcp_tool_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,

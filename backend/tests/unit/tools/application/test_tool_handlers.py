@@ -8,6 +8,11 @@ from uuid import UUID
 import pytest
 
 from hify.modules.identity.contracts.dto import ActorContext
+from hify.modules.mcp.contracts.dto import (
+    McpToolInfo,
+    McpToolInvocationRequest,
+    McpToolInvocationResult,
+)
 from hify.modules.tools.application.commands.create_tool import CreateToolCommand, CreateToolHandler
 from hify.modules.tools.application.executor import ToolRuntimeExecutor
 from hify.modules.tools.application.ports import BuiltinToolInvocation, HttpToolInvocation
@@ -106,6 +111,37 @@ class RecordingHttpToolInvoker:
         )
 
 
+class FakeMcpToolDiscovery:
+    def __init__(self, tool: McpToolInfo | None = None) -> None:
+        self.tool = tool or mcp_tool_info()
+
+    async def get_tool(self, *, team_id: UUID, tool_id: UUID) -> McpToolInfo:
+        if self.tool.team_id != team_id or self.tool.id != tool_id:
+            raise AssertionError("unexpected mcp tool lookup")
+        return self.tool
+
+    async def list_tools(self, *, team_id: UUID, server_id: UUID) -> tuple[McpToolInfo, ...]:
+        _ = team_id, server_id
+        return (self.tool,)
+
+    async def refresh_tools(self, *, team_id: UUID, server_id: UUID) -> tuple[McpToolInfo, ...]:
+        _ = team_id, server_id
+        return (self.tool,)
+
+
+class RecordingMcpToolInvoker:
+    def __init__(self) -> None:
+        self.requests: list[McpToolInvocationRequest] = []
+
+    async def invoke_tool(self, request: McpToolInvocationRequest) -> McpToolInvocationResult:
+        self.requests.append(request)
+        return McpToolInvocationResult(
+            tool_call_id=request.tool_call_id,
+            content="mcp result",
+            metadata={"mcp_tool_id": str(request.tool_id)},
+        )
+
+
 def actor_with_tool_permissions() -> ActorContext:
     return ActorContext(
         user_id=UUID("00000000-0000-7000-8000-000000000001"),
@@ -113,6 +149,25 @@ def actor_with_tool_permissions() -> ActorContext:
         membership_id=UUID("00000000-0000-7000-8000-000000000003"),
         role="member",
         permissions=("tools.manage", "tools.read"),
+    )
+
+
+def mcp_tool_info(status: str = "active") -> McpToolInfo:
+    return McpToolInfo(
+        id=UUID("00000000-0000-7000-8000-000000000020"),
+        team_id=UUID("00000000-0000-7000-8000-000000000002"),
+        server_id=UUID("00000000-0000-7000-8000-000000000021"),
+        name="search_docs",
+        description="Search MCP docs",
+        input_schema={
+            "type": "object",
+            "required": ["query"],
+            "properties": {"query": {"type": "string"}},
+        },
+        status=status,
+        created_at=FixedClock().now(),
+        updated_at=FixedClock().now(),
+        last_seen_at=FixedClock().now(),
     )
 
 
@@ -141,6 +196,69 @@ async def test_create_http_tool_definition() -> None:
     assert tool.http_method == "POST"
     assert tool.http_headers == {"X-Hify-Tool": "crm"}
     assert unit_of_work.committed
+
+
+@pytest.mark.asyncio
+async def test_create_mcp_tool_uses_discovered_tool_snapshot() -> None:
+    unit_of_work = FakeToolsUnitOfWork()
+    actor = actor_with_tool_permissions()
+    discovered_tool = mcp_tool_info()
+    handler = CreateToolHandler(
+        lambda: unit_of_work,
+        FixedClock(),
+        FakeMcpToolDiscovery(discovered_tool),
+    )
+
+    tool = await handler.handle(
+        CreateToolCommand(
+            actor=actor,
+            name="Docs Search",
+            description=None,
+            tool_kind="mcp",
+            input_schema={"type": "object"},
+            builtin_name=None,
+            endpoint_url=None,
+            http_method=None,
+            http_headers={},
+            mcp_server_id=discovered_tool.server_id,
+            mcp_tool_id=discovered_tool.id,
+        )
+    )
+
+    assert tool.tool_kind == "mcp"
+    assert tool.input_schema == discovered_tool.input_schema
+    assert tool.mcp_server_id == discovered_tool.server_id
+    assert tool.mcp_tool_id == discovered_tool.id
+    assert tool.mcp_tool_name == discovered_tool.name
+
+
+@pytest.mark.asyncio
+async def test_create_mcp_tool_rejects_inactive_discovered_tool() -> None:
+    unit_of_work = FakeToolsUnitOfWork()
+    actor = actor_with_tool_permissions()
+    discovered_tool = mcp_tool_info(status="disabled")
+    handler = CreateToolHandler(
+        lambda: unit_of_work,
+        FixedClock(),
+        FakeMcpToolDiscovery(discovered_tool),
+    )
+
+    with pytest.raises(ToolValidationError):
+        await handler.handle(
+            CreateToolCommand(
+                actor=actor,
+                name="Docs Search",
+                description=None,
+                tool_kind="mcp",
+                input_schema={"type": "object"},
+                builtin_name=None,
+                endpoint_url=None,
+                http_method=None,
+                http_headers={},
+                mcp_server_id=discovered_tool.server_id,
+                mcp_tool_id=discovered_tool.id,
+            )
+        )
 
 
 @pytest.mark.asyncio
@@ -249,6 +367,7 @@ async def test_tool_executor_invokes_http_tool() -> None:
         lambda: unit_of_work,
         RecordingBuiltinToolInvoker(),
         http_invoker,
+        RecordingMcpToolInvoker(),
     )
     request = ToolExecutionRequest(
         team_id=actor.team_id,
@@ -282,7 +401,12 @@ async def test_tool_executor_invokes_builtin_tool() -> None:
         )
     )
     builtin_invoker = RecordingBuiltinToolInvoker()
-    executor = ToolRuntimeExecutor(lambda: unit_of_work, builtin_invoker, RecordingHttpToolInvoker())
+    executor = ToolRuntimeExecutor(
+        lambda: unit_of_work,
+        builtin_invoker,
+        RecordingHttpToolInvoker(),
+        RecordingMcpToolInvoker(),
+    )
 
     result = await executor.execute_tool(
         ToolExecutionRequest(
@@ -295,6 +419,51 @@ async def test_tool_executor_invokes_builtin_tool() -> None:
 
     assert result.content == "builtin result"
     assert builtin_invoker.invocations[0].builtin_name == "web.search"
+
+
+@pytest.mark.asyncio
+async def test_tool_executor_invokes_mcp_tool() -> None:
+    unit_of_work = FakeToolsUnitOfWork()
+    actor = actor_with_tool_permissions()
+    discovered_tool = mcp_tool_info()
+    tool = await CreateToolHandler(
+        lambda: unit_of_work,
+        FixedClock(),
+        FakeMcpToolDiscovery(discovered_tool),
+    ).handle(
+        CreateToolCommand(
+            actor=actor,
+            name="Docs Search",
+            description=None,
+            tool_kind="mcp",
+            input_schema={"type": "object"},
+            builtin_name=None,
+            endpoint_url=None,
+            http_method=None,
+            http_headers={},
+            mcp_server_id=discovered_tool.server_id,
+            mcp_tool_id=discovered_tool.id,
+        )
+    )
+    mcp_invoker = RecordingMcpToolInvoker()
+    executor = ToolRuntimeExecutor(
+        lambda: unit_of_work,
+        RecordingBuiltinToolInvoker(),
+        RecordingHttpToolInvoker(),
+        mcp_invoker,
+    )
+    request = ToolExecutionRequest(
+        team_id=actor.team_id,
+        tool_id=tool.id,
+        tool_call_id=UUID("00000000-0000-7000-8000-000000000010"),
+        arguments={"query": "hify"},
+    )
+
+    result = await executor.execute_tool(request)
+
+    assert result.content == "mcp result"
+    assert mcp_invoker.requests[0].server_id == discovered_tool.server_id
+    assert mcp_invoker.requests[0].tool_id == discovered_tool.id
 
 
 @pytest.mark.asyncio
@@ -322,6 +491,7 @@ async def test_tool_executor_rejects_invalid_arguments() -> None:
         lambda: unit_of_work,
         RecordingBuiltinToolInvoker(),
         RecordingHttpToolInvoker(),
+        RecordingMcpToolInvoker(),
     )
 
     with pytest.raises(ToolValidationError):
@@ -360,6 +530,7 @@ async def test_tool_executor_rejects_disabled_tool() -> None:
         lambda: unit_of_work,
         RecordingBuiltinToolInvoker(),
         RecordingHttpToolInvoker(),
+        RecordingMcpToolInvoker(),
     )
 
     with pytest.raises(ToolDisabledError):

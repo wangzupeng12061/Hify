@@ -9,6 +9,7 @@ from hify.modules.tools.domain.errors import ToolValidationError
 class ToolKind(StrEnum):
     BUILTIN = "builtin"
     HTTP = "http"
+    MCP = "mcp"
 
 
 class ToolStatus(StrEnum):
@@ -86,6 +87,17 @@ def normalize_http_headers(value: Mapping[str, str] | None) -> dict[str, str]:
         if len(normalized_value) > 1000:
             raise ToolValidationError("http header value must be at most 1000 characters")
         normalized[normalized_name] = normalized_value
+    return normalized
+
+
+def normalize_mcp_tool_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if len(normalized) > 200:
+        raise ToolValidationError("mcp tool name must be at most 200 characters")
     return normalized
 
 

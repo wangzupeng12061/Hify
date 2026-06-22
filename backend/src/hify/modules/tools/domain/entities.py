@@ -14,6 +14,7 @@ from hify.modules.tools.domain.value_objects import (
     normalize_endpoint_url,
     normalize_http_headers,
     normalize_input_schema,
+    normalize_mcp_tool_name,
     normalize_tool_description,
     normalize_tool_name,
 )
@@ -33,6 +34,9 @@ class ToolDefinition:
     endpoint_url: str | None
     http_method: HttpToolMethod | None
     http_headers: Mapping[str, str]
+    mcp_server_id: UUID | None
+    mcp_tool_id: UUID | None
+    mcp_tool_name: str | None
     version: int
     created_by: UUID
     created_at: datetime
@@ -51,17 +55,25 @@ class ToolDefinition:
         endpoint_url: str | None,
         http_method: HttpToolMethod | None,
         http_headers: Mapping[str, str] | None,
+        mcp_server_id: UUID | None = None,
+        mcp_tool_id: UUID | None = None,
+        mcp_tool_name: str | None = None,
         created_by: UUID,
         now: datetime,
     ) -> ToolDefinition:
         normalized_builtin_name = normalize_builtin_name(builtin_name)
         normalized_endpoint_url = normalize_endpoint_url(endpoint_url)
         normalized_http_headers = normalize_http_headers(http_headers)
+        normalized_mcp_tool_name = normalize_mcp_tool_name(mcp_tool_name)
         _validate_kind_fields(
             tool_kind=tool_kind,
             builtin_name=normalized_builtin_name,
             endpoint_url=normalized_endpoint_url,
             http_method=http_method,
+            http_headers=normalized_http_headers,
+            mcp_server_id=mcp_server_id,
+            mcp_tool_id=mcp_tool_id,
+            mcp_tool_name=normalized_mcp_tool_name,
         )
         return cls(
             id=new_uuid(),
@@ -75,6 +87,9 @@ class ToolDefinition:
             endpoint_url=normalized_endpoint_url,
             http_method=http_method,
             http_headers=normalized_http_headers,
+            mcp_server_id=mcp_server_id,
+            mcp_tool_id=mcp_tool_id,
+            mcp_tool_name=normalized_mcp_tool_name,
             version=0,
             created_by=created_by,
             created_at=now,
@@ -98,12 +113,18 @@ def _validate_kind_fields(
     builtin_name: str | None,
     endpoint_url: str | None,
     http_method: HttpToolMethod | None,
+    http_headers: Mapping[str, str],
+    mcp_server_id: UUID | None,
+    mcp_tool_id: UUID | None,
+    mcp_tool_name: str | None,
 ) -> None:
     if tool_kind is ToolKind.BUILTIN:
         if builtin_name is None:
             raise ToolValidationError("builtin tools require a builtin name")
-        if endpoint_url is not None or http_method is not None:
+        if endpoint_url is not None or http_method is not None or http_headers:
             raise ToolValidationError("builtin tools must not define http fields")
+        if mcp_server_id is not None or mcp_tool_id is not None or mcp_tool_name is not None:
+            raise ToolValidationError("builtin tools must not define mcp fields")
         return
 
     if tool_kind is ToolKind.HTTP:
@@ -113,3 +134,18 @@ def _validate_kind_fields(
             raise ToolValidationError("http tools require an http method")
         if builtin_name is not None:
             raise ToolValidationError("http tools must not define a builtin name")
+        if mcp_server_id is not None or mcp_tool_id is not None or mcp_tool_name is not None:
+            raise ToolValidationError("http tools must not define mcp fields")
+        return
+
+    if tool_kind is ToolKind.MCP:
+        if mcp_server_id is None:
+            raise ToolValidationError("mcp tools require an mcp server id")
+        if mcp_tool_id is None:
+            raise ToolValidationError("mcp tools require an mcp tool id")
+        if mcp_tool_name is None:
+            raise ToolValidationError("mcp tools require an mcp tool name")
+        if builtin_name is not None:
+            raise ToolValidationError("mcp tools must not define a builtin name")
+        if endpoint_url is not None or http_method is not None or http_headers:
+            raise ToolValidationError("mcp tools must not define http fields")

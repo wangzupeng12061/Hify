@@ -19,6 +19,9 @@ class ToolInfo:
     endpoint_url: str | None
     http_method: str | None
     http_headers: Mapping[str, str]
+    mcp_server_id: UUID | None
+    mcp_tool_id: UUID | None
+    mcp_tool_name: str | None
     created_at: datetime
     updated_at: datetime
 

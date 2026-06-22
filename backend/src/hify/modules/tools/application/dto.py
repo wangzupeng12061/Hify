@@ -17,6 +17,9 @@ def tool_info_from_domain(tool: ToolDefinition) -> ToolInfo:
         endpoint_url=tool.endpoint_url,
         http_method=tool.http_method.value if tool.http_method is not None else None,
         http_headers=tool.http_headers,
+        mcp_server_id=tool.mcp_server_id,
+        mcp_tool_id=tool.mcp_tool_id,
+        mcp_tool_name=tool.mcp_tool_name,
         created_at=tool.created_at,
         updated_at=tool.updated_at,
     )
