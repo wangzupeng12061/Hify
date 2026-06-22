@@ -55,6 +55,13 @@ class FakeProviderRepository:
     async def get_by_id(self, provider_id: UUID) -> ModelProvider | None:
         return self.items.get(provider_id)
 
+    async def list_by_ids(self, provider_ids: frozenset[UUID]) -> dict[UUID, ModelProvider]:
+        return {
+            provider_id: provider
+            for provider_id, provider in self.items.items()
+            if provider_id in provider_ids
+        }
+
     async def get_by_team_type_and_name(
         self,
         *,

@@ -12,6 +12,8 @@ class ModelProviderRepository(Protocol):
 
     async def get_by_id(self, provider_id: UUID) -> ModelProvider | None: ...
 
+    async def list_by_ids(self, provider_ids: frozenset[UUID]) -> dict[UUID, ModelProvider]: ...
+
     async def get_by_team_type_and_name(
         self,
         *,

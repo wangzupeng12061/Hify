@@ -34,6 +34,14 @@ class SqlAlchemyModelProviderRepository:
             return None
         return _provider_from_model(model)
 
+    async def list_by_ids(self, provider_ids: frozenset[UUID]) -> dict[UUID, ModelProvider]:
+        if not provider_ids:
+            return {}
+        statement = select(ModelProviderModel).where(ModelProviderModel.id.in_(provider_ids))
+        models = await self._session.scalars(statement)
+        providers = (_provider_from_model(model) for model in models)
+        return {provider.id: provider for provider in providers}
+
     async def get_by_team_type_and_name(
         self,
         *,

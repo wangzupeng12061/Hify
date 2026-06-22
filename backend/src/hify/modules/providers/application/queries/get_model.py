@@ -39,10 +39,8 @@ class ListModelsHandler:
     async def handle(self, *, team_id: UUID) -> tuple[ModelInfo, ...]:
         async with self._unit_of_work_factory() as unit_of_work:
             models = await unit_of_work.models.list_by_team(team_id)
-            providers = {
-                model.provider_id: await unit_of_work.providers.get_by_id(model.provider_id)
-                for model in models
-            }
+            provider_ids = frozenset(model.provider_id for model in models)
+            providers = await unit_of_work.providers.list_by_ids(provider_ids)
 
         return tuple(
             model_info_from_domain(provider, model)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 from hashlib import sha256
 
 from cryptography.fernet import Fernet
@@ -11,9 +12,11 @@ from hify.modules.providers.domain.value_objects import CredentialSecret
 
 class FernetCredentialEncryptor(CredentialEncryptor):
     def __init__(self, encryption_key: str, *, key_version: int = 1) -> None:
-        if not encryption_key.strip():
+        normalized_key = encryption_key.strip()
+        if not normalized_key:
             raise ProviderValidationError("provider credential encryption key must not be blank")
-        self._fernet = Fernet(encryption_key.encode())
+        self._fingerprint_key = normalized_key.encode()
+        self._fernet = Fernet(self._fingerprint_key)
         self._key_version = key_version
 
     def encrypt(self, plaintext: str) -> CredentialSecret:
@@ -21,7 +24,11 @@ class FernetCredentialEncryptor(CredentialEncryptor):
         if not normalized:
             raise ProviderValidationError("provider credential must not be blank")
         ciphertext = self._fernet.encrypt(normalized.encode())
-        fingerprint = sha256(normalized.encode()).hexdigest()[:16]
+        fingerprint = hmac.new(
+            self._fingerprint_key,
+            normalized.encode(),
+            sha256,
+        ).hexdigest()[:16]
         return CredentialSecret(
             ciphertext=ciphertext,
             key_version=self._key_version,

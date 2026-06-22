@@ -21,6 +21,25 @@ def test_fernet_encryptor_encrypts_secret_and_fingerprints_without_plaintext() -
     assert b"sk-test" not in secret.ciphertext
 
 
+def test_credential_fingerprint_is_keyed() -> None:
+    first_encryptor = FernetCredentialEncryptor(Fernet.generate_key().decode())
+    second_encryptor = FernetCredentialEncryptor(Fernet.generate_key().decode())
+
+    first_secret = first_encryptor.encrypt("sk-test")
+    second_secret = second_encryptor.encrypt("sk-test")
+
+    assert first_secret.fingerprint != second_secret.fingerprint
+
+
+def test_fernet_encryptor_strips_configured_key() -> None:
+    key = Fernet.generate_key().decode()
+    encryptor = FernetCredentialEncryptor(f" {key}\n")
+
+    secret = encryptor.encrypt("sk-test")
+
+    assert secret.ciphertext
+
+
 def test_missing_encryptor_rejects_credential_writes() -> None:
     encryptor = MissingCredentialEncryptor()
 

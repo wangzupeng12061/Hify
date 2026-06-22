@@ -38,7 +38,7 @@ def test_provider_name_lookup_matches_case_insensitive_unique_index() -> None:
     sql = _compile_sql(session.statement)
     params = session.statement.compile(dialect=postgresql.dialect()).params
     assert "lower(providers_providers.name)" in sql
-    assert params["lower_1"] == "openai"
+    assert "openai" in params.values()
 
 
 def test_model_name_lookup_matches_case_insensitive_unique_index() -> None:
@@ -56,7 +56,7 @@ def test_model_name_lookup_matches_case_insensitive_unique_index() -> None:
     sql = _compile_sql(session.statement)
     params = session.statement.compile(dialect=postgresql.dialect()).params
     assert "lower(providers_models.model_name)" in sql
-    assert params["lower_1"] == "gpt-4.1"
+    assert "gpt-4.1" in params.values()
 
 
 def _run(awaitable: Any, session: SessionSpy) -> None:

@@ -20,7 +20,7 @@ from hify.modules.providers.infrastructure.encryption import (
     FernetCredentialEncryptor,
     MissingCredentialEncryptor,
 )
-from hify.shared.domain.clock import SystemClock
+from hify.shared.domain.clock import Clock, SystemClock
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +34,7 @@ def create_providers_module(
     *,
     credential_encryption_key: str | None,
     credential_key_version: int = 1,
-    clock: SystemClock | None = None,
+    clock: Clock | None = None,
 ) -> ProvidersModule:
     module_clock = clock or SystemClock()
     credential_encryptor = (
