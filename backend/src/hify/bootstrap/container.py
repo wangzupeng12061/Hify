@@ -10,6 +10,7 @@ from hify.modules.conversations.wiring import ConversationsModule, create_conver
 from hify.modules.identity.wiring import IdentityModule, create_identity_module
 from hify.modules.jobs.wiring import JobsModule, create_jobs_module
 from hify.modules.knowledge.wiring import KnowledgeModule, create_knowledge_module
+from hify.modules.mcp.wiring import McpModule, create_mcp_module
 from hify.modules.providers.wiring import ProvidersModule, create_providers_module
 from hify.modules.runs.wiring import RunsModule, create_runs_module
 from hify.modules.tools.wiring import ToolsModule, create_tools_module
@@ -27,6 +28,7 @@ class HifyContainer:
     conversations: ConversationsModule
     jobs: JobsModule
     knowledge: KnowledgeModule
+    mcp: McpModule
     runs: RunsModule
     tools: ToolsModule
 
@@ -50,6 +52,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         model_catalog=providers.model_catalog,
         embedding_gateway=providers.embedding_gateway,
     )
+    mcp = create_mcp_module(session_factory)
     agents = create_agents_module(
         session_factory,
         model_catalog=providers.model_catalog,
@@ -78,6 +81,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         conversations=conversations,
         jobs=jobs,
         knowledge=knowledge,
+        mcp=mcp,
         runs=runs,
         tools=tools,
     )
