@@ -68,6 +68,7 @@ def create_runs_module(
         cancel_run_handler=cancel_run_handler,
         get_run_handler=get_run_for_actor_handler,
         list_events_handler=list_events_for_actor_handler,
+        run_executor=run_executor,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),
     )
     return RunsModule(router=router, run_reader=run_reader, run_executor=run_executor)
