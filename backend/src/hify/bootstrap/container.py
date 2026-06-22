@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from hify.bootstrap.settings import Settings
 from hify.modules.agents.wiring import AgentsModule, create_agents_module
+from hify.modules.conversations.wiring import ConversationsModule, create_conversations_module
 from hify.modules.identity.wiring import IdentityModule, create_identity_module
 from hify.modules.providers.wiring import ProvidersModule, create_providers_module
 from hify.shared.infrastructure.database import create_engine, create_session_factory
@@ -19,6 +20,7 @@ class HifyContainer:
     identity: IdentityModule
     providers: ProvidersModule
     agents: AgentsModule
+    conversations: ConversationsModule
 
 
 def create_container(settings: Settings | None = None) -> HifyContainer:
@@ -35,6 +37,10 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         credential_key_version=resolved_settings.provider_credential_key_version,
     )
     agents = create_agents_module(session_factory, model_catalog=providers.model_catalog)
+    conversations = create_conversations_module(
+        session_factory,
+        agent_catalog=agents.agent_catalog,
+    )
     return HifyContainer(
         settings=resolved_settings,
         engine=engine,
@@ -42,4 +48,5 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         identity=identity,
         providers=providers,
         agents=agents,
+        conversations=conversations,
     )
