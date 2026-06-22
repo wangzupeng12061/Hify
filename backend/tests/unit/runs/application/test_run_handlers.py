@@ -22,6 +22,7 @@ from hify.modules.providers.contracts.dto import (
     ModelChunk,
     ModelRequest,
     TextDeltaChunk,
+    ToolCallDeltaChunk,
     UsageChunk,
     ModelUsage,
 )
@@ -46,6 +47,8 @@ from hify.modules.runs.application.queries.list_run_events import (
 from hify.modules.runs.domain.entities import AgentRun, RunEvent, RunStep
 from hify.modules.runs.domain.errors import RunPermissionDeniedError
 from hify.modules.runs.domain.value_objects import RunEventType
+from hify.modules.tools.contracts.dto import ToolExecutionRequest, ToolExecutionResult
+from hify.modules.tools.contracts.errors import ToolExecutionHttpError
 from hify.shared.domain.clock import Clock
 
 
@@ -278,6 +281,42 @@ class RecordingModelGateway:
             raise self.error
 
 
+class SequencedModelGateway:
+    def __init__(self, chunks_by_request: tuple[tuple[ModelChunk, ...], ...]) -> None:
+        self.chunks_by_request = chunks_by_request
+        self.requests: list[ModelRequest] = []
+        self.contexts: list[CallContext] = []
+
+    def stream(
+        self,
+        request: ModelRequest,
+        context: CallContext,
+    ) -> AsyncIterator[ModelChunk]:
+        self.requests.append(request)
+        self.contexts.append(context)
+        return self._stream(self.chunks_by_request[len(self.requests) - 1])
+
+    async def _stream(self, chunks: tuple[ModelChunk, ...]) -> AsyncIterator[ModelChunk]:
+        for chunk in chunks:
+            yield chunk
+
+
+class RecordingToolExecutor:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.requests: list[ToolExecutionRequest] = []
+
+    async def execute_tool(self, request: ToolExecutionRequest) -> ToolExecutionResult:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return ToolExecutionResult(
+            tool_call_id=request.tool_call_id,
+            content="tool result",
+            metadata={"ok": True},
+        )
+
+
 @pytest.mark.asyncio
 async def test_create_run_uses_conversation_and_latest_agent_version() -> None:
     unit_of_work = FakeRunsUnitOfWork()
@@ -471,6 +510,7 @@ async def test_run_executor_streams_model_chunks_into_run_events() -> None:
         FakeConversationReader(conversation, (message,)),
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         gateway,
+        RecordingToolExecutor(),
         FixedClock(),
     )
 
@@ -509,6 +549,7 @@ async def test_run_executor_marks_run_failed_on_provider_error() -> None:
         FakeConversationReader(conversation),
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
         RecordingModelGateway((), ProviderUnavailableError("model unavailable")),
+        RecordingToolExecutor(),
         FixedClock(),
     )
 
@@ -532,6 +573,7 @@ async def test_run_executor_marks_run_interrupted_after_stream_interruption() ->
             (TextDeltaChunk(chunk_type="text_delta", text="partial"),),
             ProviderStreamInterruptedError("stream interrupted"),
         ),
+        RecordingToolExecutor(),
         FixedClock(),
     )
 
@@ -539,6 +581,141 @@ async def test_run_executor_marks_run_interrupted_after_stream_interruption() ->
 
     assert result.status == "interrupted"
     assert result.error_code == "PROVIDER_STREAM_INTERRUPTED_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_run_executor_executes_tool_calls_and_continues_model_loop() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    run = await _create_run(unit_of_work, actor)
+    tool_id = UUID("00000000-0000-7000-8000-000000000011")
+    tool_call_id = UUID("00000000-0000-7000-8000-000000000012")
+    gateway = SequencedModelGateway(
+        (
+            (
+                ToolCallDeltaChunk(
+                    chunk_type="tool_call_delta",
+                    tool_call_id=str(tool_call_id),
+                    name=str(tool_id),
+                    arguments_delta='{"email":"owner@example.com"}',
+                ),
+                DoneChunk(chunk_type="done", finish_reason="tool_calls"),
+            ),
+            (
+                TextDeltaChunk(chunk_type="text_delta", text="Done"),
+                DoneChunk(chunk_type="done", finish_reason="stop"),
+            ),
+        )
+    )
+    tool_executor = RecordingToolExecutor()
+    executor = RunExecutor(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation),
+        FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        gateway,
+        tool_executor,
+        FixedClock(),
+    )
+
+    result = await executor.execute(ExecuteRunCommand(run_id=run.id))
+    events = await unit_of_work.events.list_by_run(
+        run_id=run.id,
+        after_sequence_number=None,
+        limit=30,
+    )
+    steps = await unit_of_work.steps.list_by_run(run_id=run.id)
+
+    assert result.status == "succeeded"
+    assert tool_executor.requests[0] == ToolExecutionRequest(
+        team_id=actor.team_id,
+        tool_id=tool_id,
+        tool_call_id=tool_call_id,
+        arguments={"email": "owner@example.com"},
+    )
+    assert gateway.requests[1].messages[-1].role == "tool"
+    assert gateway.requests[1].messages[-1].content == "tool result"
+    assert [step.step_type.value for step in steps] == ["llm_call", "tool_call", "llm_call"]
+    assert "tool_result" in [event.payload.get("chunk_type") for event in events]
+
+
+@pytest.mark.asyncio
+async def test_run_executor_marks_run_failed_when_tool_fails() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    run = await _create_run(unit_of_work, actor)
+    gateway = SequencedModelGateway(
+        (
+            (
+                ToolCallDeltaChunk(
+                    chunk_type="tool_call_delta",
+                    tool_call_id="00000000-0000-7000-8000-000000000012",
+                    name="00000000-0000-7000-8000-000000000011",
+                    arguments_delta="{}",
+                ),
+                DoneChunk(chunk_type="done", finish_reason="tool_calls"),
+            ),
+        )
+    )
+    executor = RunExecutor(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation),
+        FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        gateway,
+        RecordingToolExecutor(ToolExecutionHttpError("tool failed")),
+        FixedClock(),
+    )
+
+    result = await executor.execute(ExecuteRunCommand(run_id=run.id))
+
+    assert result.status == "failed"
+    assert result.error_code == "TOOL_EXECUTION_HTTP_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_run_executor_enforces_max_tool_iterations() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    run = await _create_run(unit_of_work, actor)
+    tool_id = UUID("00000000-0000-7000-8000-000000000011")
+    gateway = SequencedModelGateway(
+        (
+            (
+                ToolCallDeltaChunk(
+                    chunk_type="tool_call_delta",
+                    tool_call_id="00000000-0000-7000-8000-000000000012",
+                    name=str(tool_id),
+                    arguments_delta="{}",
+                ),
+                DoneChunk(chunk_type="done", finish_reason="tool_calls"),
+            ),
+            (
+                ToolCallDeltaChunk(
+                    chunk_type="tool_call_delta",
+                    tool_call_id="00000000-0000-7000-8000-000000000013",
+                    name=str(tool_id),
+                    arguments_delta="{}",
+                ),
+                DoneChunk(chunk_type="done", finish_reason="tool_calls"),
+            ),
+        )
+    )
+    executor = RunExecutor(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation),
+        FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        gateway,
+        RecordingToolExecutor(),
+        FixedClock(),
+        max_tool_iterations=1,
+    )
+
+    result = await executor.execute(ExecuteRunCommand(run_id=run.id))
+
+    assert result.status == "failed"
+    assert result.error_code == "RUN_TOOL_ITERATION_LIMIT_EXCEEDED"
 
 
 async def _create_run(unit_of_work: FakeRunsUnitOfWork, actor: ActorContext) -> RunInfo:

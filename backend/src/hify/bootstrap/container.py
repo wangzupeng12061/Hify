@@ -45,13 +45,14 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         session_factory,
         agent_catalog=agents.agent_catalog,
     )
+    tools = create_tools_module(session_factory)
     runs = create_runs_module(
         session_factory,
         conversation_reader=conversations.conversation_reader,
         agent_catalog=agents.agent_catalog,
         model_gateway=providers.model_gateway,
+        tool_executor=tools.tool_executor,
     )
-    tools = create_tools_module(session_factory)
     return HifyContainer(
         settings=resolved_settings,
         engine=engine,
