@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from hify.bootstrap.api_schemas import DEFAULT_ERROR_RESPONSES, generate_operation_id
 from hify.bootstrap.container import HifyContainer, create_container
 
 
 def create_app(container: HifyContainer | None = None) -> FastAPI:
     resolved_container = container or create_container()
-    app = FastAPI(title="Hify API")
+    app = FastAPI(
+        title="Hify API",
+        version="0.1.0",
+        responses=DEFAULT_ERROR_RESPONSES,
+        generate_unique_id_function=generate_operation_id,
+    )
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
