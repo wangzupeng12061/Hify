@@ -18,6 +18,13 @@ from hify.modules.usage.application.queries.get_team_usage_quota_status import (
     GetTeamUsageQuotaStatusHandler,
 )
 from hify.modules.usage.application.queries.get_run_usage_summary import GetRunUsageSummaryHandler
+from hify.modules.usage.application.queries.get_usage_cost_by_day import GetUsageCostByDayHandler
+from hify.modules.usage.application.queries.get_usage_cost_by_model import (
+    GetUsageCostByModelHandler,
+)
+from hify.modules.usage.application.queries.get_usage_cost_summary import (
+    GetUsageCostSummaryHandler,
+)
 from hify.modules.usage.application.queries.get_team_usage_summary import GetTeamUsageSummaryHandler
 from hify.modules.usage.application.queries.usage_reader import UsageReaderService
 from hify.modules.usage.contracts.services import UsageQuotaChecker, UsageReader, UsageRecorder
@@ -53,6 +60,9 @@ def create_usage_module(
     get_team_summary_handler = GetTeamUsageSummaryHandler(unit_of_work_factory)
     get_run_summary_handler = GetRunUsageSummaryHandler(unit_of_work_factory)
     get_quota_status_handler = GetTeamUsageQuotaStatusHandler(unit_of_work_factory, module_clock)
+    get_cost_summary_handler = GetUsageCostSummaryHandler(unit_of_work_factory, module_clock)
+    get_cost_by_model_handler = GetUsageCostByModelHandler(unit_of_work_factory, module_clock)
+    get_cost_by_day_handler = GetUsageCostByDayHandler(unit_of_work_factory, module_clock)
     usage_recorder = UsageRecorderService(record_model_usage_handler)
     usage_reader = UsageReaderService(unit_of_work_factory)
     usage_quota_checker = UsageQuotaCheckerService(unit_of_work_factory)
@@ -60,6 +70,9 @@ def create_usage_module(
         get_team_summary_handler=get_team_summary_handler,
         get_run_summary_handler=get_run_summary_handler,
         get_quota_status_handler=get_quota_status_handler,
+        get_cost_summary_handler=get_cost_summary_handler,
+        get_cost_by_model_handler=get_cost_by_model_handler,
+        get_cost_by_day_handler=get_cost_by_day_handler,
         set_quota_handler=set_quota_handler,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),
     )

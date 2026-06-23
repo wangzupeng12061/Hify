@@ -24,6 +24,12 @@ class ResultSpy:
     def one(self) -> tuple[int, int, int, str]:
         return (0, 0, 0, "0")
 
+    def __iter__(self) -> "ResultSpy":
+        return self
+
+    def __next__(self) -> tuple[Any, ...]:
+        raise StopIteration
+
 
 def test_usage_model_has_idempotency_and_summary_indexes() -> None:
     index_names = {index.name for index in UsageRecordModel.__table__.indexes}
@@ -74,6 +80,46 @@ def test_team_period_summary_filters_by_month_range() -> None:
     assert "usage_records.team_id" in sql
     assert "usage_records.occurred_at >=" in sql
     assert "usage_records.occurred_at <" in sql
+
+
+def test_model_cost_summary_groups_by_model_for_period() -> None:
+    session = SessionSpy()
+    repository = SqlAlchemyUsageRecordRepository(cast(AsyncSession, session))
+
+    _run(
+        repository.summarize_by_model_for_team_period(
+            team_id=UUID("00000000-0000-7000-8000-000000000001"),
+            period_start=datetime(2026, 6, 1, tzinfo=UTC),
+            period_end=datetime(2026, 7, 1, tzinfo=UTC),
+        ),
+        session,
+    )
+
+    sql = _compile_sql(session.statement)
+    assert "usage_records.team_id" in sql
+    assert "usage_records.occurred_at >=" in sql
+    assert "GROUP BY usage_records.provider_model_id" in sql
+    assert "sum(usage_records.cost_amount)" in sql
+
+
+def test_daily_cost_summary_groups_by_day_for_period() -> None:
+    session = SessionSpy()
+    repository = SqlAlchemyUsageRecordRepository(cast(AsyncSession, session))
+
+    _run(
+        repository.summarize_by_day_for_team_period(
+            team_id=UUID("00000000-0000-7000-8000-000000000001"),
+            period_start=datetime(2026, 6, 1, tzinfo=UTC),
+            period_end=datetime(2026, 7, 1, tzinfo=UTC),
+        ),
+        session,
+    )
+
+    sql = _compile_sql(session.statement)
+    assert "date_trunc" in sql
+    assert "usage_records.team_id" in sql
+    assert "usage_records.occurred_at <" in sql
+    assert "GROUP BY date_trunc" in sql
 
 
 def _run(awaitable: Any, session: SessionSpy) -> None:

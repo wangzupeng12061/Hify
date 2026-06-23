@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from types import TracebackType
 from typing import Self
@@ -23,6 +23,18 @@ from hify.modules.usage.application.queries.get_team_usage_quota_status import (
     GetTeamUsageQuotaStatusHandler,
     GetTeamUsageQuotaStatusQuery,
 )
+from hify.modules.usage.application.queries.get_usage_cost_by_day import (
+    GetUsageCostByDayHandler,
+    GetUsageCostByDayQuery,
+)
+from hify.modules.usage.application.queries.get_usage_cost_by_model import (
+    GetUsageCostByModelHandler,
+    GetUsageCostByModelQuery,
+)
+from hify.modules.usage.application.queries.get_usage_cost_summary import (
+    GetUsageCostSummaryHandler,
+    GetUsageCostSummaryQuery,
+)
 from hify.modules.usage.application.queries.get_run_usage_summary import (
     GetRunUsageSummaryHandler,
     GetRunUsageSummaryQuery,
@@ -33,7 +45,7 @@ from hify.modules.usage.application.queries.get_team_usage_summary import (
 )
 from hify.modules.usage.contracts.errors import UsageQuotaExceededError
 from hify.modules.usage.domain.entities import UsageQuota, UsageRecord
-from hify.modules.usage.domain.errors import UsagePermissionDeniedError
+from hify.modules.usage.domain.errors import UsagePermissionDeniedError, UsageValidationError
 from hify.shared.domain.clock import Clock
 
 
@@ -96,6 +108,63 @@ class FakeUsageRecordRepository:
             and period_start <= record.occurred_at < period_end
         ]
         return _summarize(records)
+
+    async def summarize_by_model_for_team_period(
+        self,
+        *,
+        team_id: UUID,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> tuple[tuple[UUID, str, str, int, int, int, str], ...]:
+        records = [
+            record
+            for record in self.items.values()
+            if record.team_id == team_id
+            and period_start <= record.occurred_at < period_end
+        ]
+        grouped: dict[tuple[UUID, str, str], list[UsageRecord]] = {}
+        for record in records:
+            key = (record.provider_model_id, record.provider, record.model)
+            grouped.setdefault(key, []).append(record)
+        rows: list[tuple[UUID, str, str, int, int, int, str]] = []
+        for (provider_model_id, provider, model), group_records in grouped.items():
+            input_tokens, output_tokens, total_tokens, cost_amount = _summarize(group_records)
+            rows.append(
+                (
+                    provider_model_id,
+                    provider,
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
+                    cost_amount,
+                )
+            )
+        return tuple(sorted(rows, key=lambda row: (Decimal(row[6]), row[2]), reverse=True))
+
+    async def summarize_by_day_for_team_period(
+        self,
+        *,
+        team_id: UUID,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> tuple[tuple[date, int, int, int, str], ...]:
+        records = [
+            record
+            for record in self.items.values()
+            if record.team_id == team_id
+            and period_start <= record.occurred_at < period_end
+        ]
+        grouped: dict[date, list[UsageRecord]] = {}
+        for record in records:
+            grouped.setdefault(record.occurred_at.date(), []).append(record)
+        return tuple(
+            (
+                usage_date,
+                *_summarize(grouped[usage_date]),
+            )
+            for usage_date in sorted(grouped)
+        )
 
 
 class FakeUsageQuotaRepository:
@@ -299,6 +368,150 @@ async def test_usage_summary_requires_usage_read_permission() -> None:
 
 
 @pytest.mark.asyncio
+async def test_usage_cost_summary_uses_current_month_and_quota_budget() -> None:
+    unit_of_work = FakeUsageUnitOfWork()
+    actor = actor_with_usage_manage()
+    await SetTeamUsageQuotaHandler(lambda: unit_of_work, FixedClock()).handle(
+        SetTeamUsageQuotaCommand(actor=actor, monthly_token_limit=100)
+    )
+    _add_usage_record(
+        unit_of_work,
+        input_tokens=10,
+        output_tokens=20,
+        cost_amount=Decimal("0.03000000"),
+        occurred_at=datetime(2026, 6, 1, tzinfo=UTC),
+    )
+    _add_usage_record(
+        unit_of_work,
+        input_tokens=99,
+        output_tokens=99,
+        cost_amount=Decimal("9.99000000"),
+        occurred_at=datetime(2026, 5, 31, 23, 59, tzinfo=UTC),
+        idempotency_key="previous-month",
+    )
+
+    summary = await GetUsageCostSummaryHandler(lambda: unit_of_work, FixedClock()).handle(
+        GetUsageCostSummaryQuery(actor=actor)
+    )
+
+    assert summary.period_start == datetime(2026, 6, 1, tzinfo=UTC)
+    assert summary.period_end == datetime(2026, 7, 1, tzinfo=UTC)
+    assert summary.total_tokens == 30
+    assert summary.cost_amount == Decimal("0.03000000")
+    assert summary.monthly_token_limit == 100
+    assert summary.remaining_tokens == 70
+    assert not summary.is_quota_exceeded
+
+
+@pytest.mark.asyncio
+async def test_usage_cost_by_model_groups_window_by_model() -> None:
+    unit_of_work = FakeUsageUnitOfWork()
+    actor = actor_with_usage_read()
+    cheaper_model_id = UUID("00000000-0000-7000-8000-000000000008")
+    _add_usage_record(
+        unit_of_work,
+        input_tokens=10,
+        output_tokens=20,
+        cost_amount=Decimal("0.03000000"),
+        idempotency_key="model-a-1",
+    )
+    _add_usage_record(
+        unit_of_work,
+        input_tokens=5,
+        output_tokens=5,
+        cost_amount=Decimal("0.01000000"),
+        idempotency_key="model-a-2",
+    )
+    _add_usage_record(
+        unit_of_work,
+        provider_model_id=cheaper_model_id,
+        provider="anthropic",
+        model="claude-sonnet",
+        input_tokens=3,
+        output_tokens=4,
+        cost_amount=Decimal("0.00500000"),
+        idempotency_key="model-b",
+    )
+
+    result = await GetUsageCostByModelHandler(lambda: unit_of_work, FixedClock()).handle(
+        GetUsageCostByModelQuery(actor=actor)
+    )
+
+    assert len(result.items) == 2
+    assert result.items[0].provider_model_id == PROVIDER_MODEL_ID
+    assert result.items[0].input_tokens == 15
+    assert result.items[0].output_tokens == 25
+    assert result.items[0].total_tokens == 40
+    assert result.items[0].cost_amount == Decimal("0.04000000")
+    assert result.items[1].provider_model_id == cheaper_model_id
+    assert result.items[1].cost_amount == Decimal("0.00500000")
+
+
+@pytest.mark.asyncio
+async def test_usage_cost_by_day_groups_window_by_calendar_day() -> None:
+    unit_of_work = FakeUsageUnitOfWork()
+    actor = actor_with_usage_read()
+    _add_usage_record(
+        unit_of_work,
+        input_tokens=10,
+        output_tokens=20,
+        cost_amount=Decimal("0.03000000"),
+        occurred_at=datetime(2026, 6, 2, 10, tzinfo=UTC),
+        idempotency_key="day-1a",
+    )
+    _add_usage_record(
+        unit_of_work,
+        input_tokens=5,
+        output_tokens=7,
+        cost_amount=Decimal("0.01200000"),
+        occurred_at=datetime(2026, 6, 2, 23, tzinfo=UTC),
+        idempotency_key="day-1b",
+    )
+    _add_usage_record(
+        unit_of_work,
+        input_tokens=3,
+        output_tokens=4,
+        cost_amount=Decimal("0.00700000"),
+        occurred_at=datetime(2026, 6, 3, tzinfo=UTC),
+        idempotency_key="day-2",
+    )
+
+    result = await GetUsageCostByDayHandler(lambda: unit_of_work, FixedClock()).handle(
+        GetUsageCostByDayQuery(actor=actor)
+    )
+
+    assert [item.usage_date for item in result.items] == [
+        date(2026, 6, 2),
+        date(2026, 6, 3),
+    ]
+    assert result.items[0].total_tokens == 42
+    assert result.items[0].cost_amount == Decimal("0.04200000")
+    assert result.items[1].total_tokens == 7
+
+
+@pytest.mark.asyncio
+async def test_usage_cost_period_requires_valid_from_to_pair() -> None:
+    handler = GetUsageCostSummaryHandler(lambda: FakeUsageUnitOfWork(), FixedClock())
+    actor = actor_with_usage_read()
+
+    with pytest.raises(UsageValidationError, match="provided together"):
+        await handler.handle(
+            GetUsageCostSummaryQuery(
+                actor=actor,
+                period_start=datetime(2026, 6, 1, tzinfo=UTC),
+            )
+        )
+    with pytest.raises(UsageValidationError, match="after"):
+        await handler.handle(
+            GetUsageCostSummaryQuery(
+                actor=actor,
+                period_start=datetime(2026, 6, 2, tzinfo=UTC),
+                period_end=datetime(2026, 6, 1, tzinfo=UTC),
+            )
+        )
+
+
+@pytest.mark.asyncio
 async def test_set_team_usage_quota_creates_and_updates_quota() -> None:
     unit_of_work = FakeUsageUnitOfWork()
     actor = actor_with_usage_manage()
@@ -368,6 +581,37 @@ async def test_quota_checker_allows_when_quota_is_not_configured() -> None:
     assert status_info.monthly_token_limit is None
     assert status_info.remaining_tokens is None
     assert not status_info.is_exceeded
+
+
+def _add_usage_record(
+    unit_of_work: FakeUsageUnitOfWork,
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cost_amount: Decimal,
+    provider_model_id: UUID = PROVIDER_MODEL_ID,
+    provider: str = "openai",
+    model: str = "gpt-4.1",
+    idempotency_key: str = "usage-record",
+    occurred_at: datetime = NOW,
+) -> None:
+    record = UsageRecord.create(
+        team_id=TEAM_ID,
+        user_id=USER_ID,
+        run_id=RUN_ID,
+        agent_id=AGENT_ID,
+        agent_version_id=AGENT_VERSION_ID,
+        provider_model_id=provider_model_id,
+        provider=provider,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_amount=cost_amount,
+        idempotency_key=idempotency_key,
+        occurred_at=occurred_at,
+        now=NOW,
+    )
+    unit_of_work.records.items[record.id] = record
 
 
 def _record_command(
