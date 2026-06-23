@@ -218,13 +218,18 @@ select {
 }
 
 .form-field input,
-.form-field select {
+.form-field select,
+.form-field textarea {
   background: var(--panel-strong);
   border: 1px solid var(--border);
   border-radius: 0.75rem;
   color: var(--foreground);
   min-height: 2.5rem;
   padding: 0.625rem 0.75rem;
+}
+
+.form-field textarea {
+  resize: vertical;
 }
 
 .checkbox-field {
