@@ -8,10 +8,17 @@ import {
   useCreateConversation,
 } from "@/features/conversations";
 import type { Conversation, ConversationMessage } from "@/features/conversations";
-import { useCancelRun, useCreateRun, useRun, useRunEvents, useRunStream } from "@/features/runs";
+import {
+  useCancelRun,
+  useCreateRun,
+  useRun,
+  useRunDiagnostics,
+  useRunEvents,
+  useRunStream,
+} from "@/features/runs";
 import { HifyApiError } from "@/lib/api/errors";
 
-import type { Run, RunEvent } from "../types";
+import type { Run, RunDiagnostics, RunEvent } from "../types";
 
 type ConversationFormState = {
   agentId: string;
@@ -56,6 +63,7 @@ export function ChatRunsWorkspace() {
     conversation ? { conversationId: conversation.id, limit: 50 } : null,
   );
   const runQuery = useRun(run ? { runId: run.id } : null);
+  const runDiagnosticsQuery = useRunDiagnostics(run ? { runId: run.id } : null);
   const runEventsQuery = useRunEvents(run ? { runId: run.id, limit: 50 } : null);
   const messages = conversationMessagesQuery.data?.items ?? localMessages;
   const events = useMemo(
@@ -68,6 +76,10 @@ export function ChatRunsWorkspace() {
   );
   const assistantOutput = useMemo(() => getAssistantOutput(events), [events]);
   const usageSummary = useMemo(() => getUsageSummary(events), [events]);
+  const workflowExecution = useMemo(
+    () => getWorkflowExecution(events, runDiagnosticsQuery.data),
+    [events, runDiagnosticsQuery.data],
+  );
   const operationError =
     createConversationMutation.error ??
     appendMessageMutation.error ??
@@ -75,6 +87,7 @@ export function ChatRunsWorkspace() {
     cancelRunMutation.error ??
     conversationMessagesQuery.error ??
     runQuery.error ??
+    runDiagnosticsQuery.error ??
     runEventsQuery.error ??
     runStream.error;
 
@@ -163,6 +176,7 @@ export function ChatRunsWorkspace() {
       setRun(cancelledRun);
       runStream.stop();
       void runQuery.refetch();
+      void runDiagnosticsQuery.refetch();
       void runEventsQuery.refetch();
     } catch {
       return;
@@ -222,12 +236,17 @@ export function ChatRunsWorkspace() {
         streamStatus={runStream.status}
         usageSummary={usageSummary}
       />
+      <WorkflowExecutionPanel
+        isLoading={runDiagnosticsQuery.isFetching || runEventsQuery.isFetching}
+        workflowExecution={workflowExecution}
+      />
       <MessageList isLoading={conversationMessagesQuery.isFetching} messages={messages} />
       <RunEventList
         events={events}
         isLoading={runEventsQuery.isFetching}
         onRefresh={() => {
           void runEventsQuery.refetch();
+          void runDiagnosticsQuery.refetch();
           void runQuery.refetch();
         }}
         run={visibleRun}
@@ -431,6 +450,67 @@ function AssistantOutputPanel({
         <p className="muted">No assistant output streamed yet.</p>
       )}
       {usageSummary ? <p className="form-result">{usageSummary}</p> : null}
+    </section>
+  );
+}
+
+function WorkflowExecutionPanel({
+  isLoading,
+  workflowExecution,
+}: {
+  isLoading: boolean;
+  workflowExecution: WorkflowExecution;
+}) {
+  const { snapshot, steps } = workflowExecution;
+
+  return (
+    <section className="panel">
+      <div className="panel__header">
+        <div>
+          <p className="panel__eyebrow">Workflow</p>
+          <h2>Execution path</h2>
+        </div>
+        <span className="status-pill">{isLoading ? "Refreshing" : `${steps.length} steps`}</span>
+      </div>
+      {snapshot ? (
+        <dl className="identity-grid">
+          <ResultField label="Workflow" value={snapshot.workflowName ?? "Unnamed workflow"} />
+          <ResultField label="Version" value={formatOptionalNumber(snapshot.versionNumber)} />
+          <ResultField label="Workflow ID" value={snapshot.workflowId ?? "Not available"} />
+          <ResultField
+            label="Workflow version ID"
+            value={snapshot.workflowVersionId ?? "Not available"}
+          />
+          <ResultField label="Nodes" value={`${snapshot.nodeCount}`} />
+          <ResultField label="Edges" value={`${snapshot.edgeCount}`} />
+        </dl>
+      ) : (
+        <p className="muted">
+          No workflow snapshot has been recorded for this run. The agent may not be bound to a
+          published workflow yet.
+        </p>
+      )}
+      {steps.length > 0 ? (
+        <ol className="timeline-list">
+          {steps.map((step) => (
+            <li className="timeline-list__item" key={`${step.stepId}-${step.sequenceNumber}`}>
+              <span>
+                #{step.sequenceNumber} {step.status}
+              </span>
+              <p>{step.label}</p>
+              <p className="muted">{formatWorkflowStepDetail(step)}</p>
+              {step.errorCode ? (
+                <p className="form-result">
+                  <strong>Error:</strong> {step.errorCode}
+                  {step.errorMessage ? ` · ${step.errorMessage}` : ""}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="muted">No workflow runtime steps have been recorded yet.</p>
+      )}
     </section>
   );
 }
@@ -642,4 +722,200 @@ function describeRunEvent(event: RunEvent): string {
   }
 
   return event.event_type;
+}
+
+type WorkflowSnapshot = {
+  edgeCount: number;
+  nodeCount: number;
+  versionNumber: number | null;
+  workflowId: string | null;
+  workflowName: string | null;
+  workflowVersionId: string | null;
+};
+
+type WorkflowStepView = {
+  durationMs: number | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  label: string;
+  nodeId: string | null;
+  sequenceNumber: number;
+  status: string;
+  stepId: string;
+  stepType: string;
+};
+
+type WorkflowExecution = {
+  snapshot: WorkflowSnapshot | null;
+  steps: WorkflowStepView[];
+};
+
+function getWorkflowExecution(
+  events: RunEvent[],
+  diagnostics: RunDiagnostics | undefined,
+): WorkflowExecution {
+  return {
+    snapshot: getWorkflowSnapshot(events),
+    steps: getWorkflowSteps(events, diagnostics),
+  };
+}
+
+function getWorkflowSnapshot(events: RunEvent[]): WorkflowSnapshot | null {
+  const snapshotEvent = [...events]
+    .reverse()
+    .find((event) => event.payload.chunk_type === "workflow_snapshot");
+  if (!snapshotEvent) {
+    return null;
+  }
+
+  const definition = snapshotEvent.payload.workflow_definition;
+  const workflowId = snapshotEvent.payload.workflow_id;
+  const workflowName = snapshotEvent.payload.workflow_name;
+  const workflowVersionId = snapshotEvent.payload.workflow_version_id;
+  const workflowVersionNumber = snapshotEvent.payload.workflow_version_number;
+
+  return {
+    edgeCount: getArrayLengthFromRecord(definition, "edges"),
+    nodeCount: getArrayLengthFromRecord(definition, "nodes"),
+    versionNumber: typeof workflowVersionNumber === "number" ? workflowVersionNumber : null,
+    workflowId: typeof workflowId === "string" ? workflowId : null,
+    workflowName: typeof workflowName === "string" ? workflowName : null,
+    workflowVersionId: typeof workflowVersionId === "string" ? workflowVersionId : null,
+  };
+}
+
+function getWorkflowSteps(
+  events: RunEvent[],
+  diagnostics: RunDiagnostics | undefined,
+): WorkflowStepView[] {
+  const stepsById = new Map<string, WorkflowStepView>();
+
+  events.forEach((event) => {
+    if (event.event_type !== "step.started") {
+      return;
+    }
+
+    const workflowStep = workflowStepFromStartedEvent(event);
+    if (workflowStep) {
+      stepsById.set(workflowStep.stepId, workflowStep);
+    }
+  });
+
+  events.forEach((event) => {
+    if (event.event_type !== "step.succeeded" && event.event_type !== "step.failed") {
+      return;
+    }
+
+    const stepId = getStringPayload(event, "step_id");
+    if (!stepId) {
+      return;
+    }
+
+    const existingStep = stepsById.get(stepId);
+    if (!existingStep) {
+      return;
+    }
+
+    stepsById.set(stepId, {
+      ...existingStep,
+      errorCode: getStringPayload(event, "error_code") ?? existingStep.errorCode,
+      status: event.event_type === "step.succeeded" ? "succeeded" : "failed",
+    });
+  });
+
+  diagnostics?.steps.forEach((step) => {
+    if (!isWorkflowStepName(step.name)) {
+      return;
+    }
+
+    const existingStep = stepsById.get(step.id);
+    stepsById.set(step.id, {
+      durationMs: step.duration_ms,
+      errorCode: step.error_code,
+      errorMessage: step.error_message,
+      label: step.name ?? existingStep?.label ?? formatWorkflowStepType(step.step_type),
+      nodeId: existingStep?.nodeId ?? null,
+      sequenceNumber: step.sequence_number,
+      status: step.status,
+      stepId: step.id,
+      stepType: step.step_type,
+    });
+  });
+
+  return [...stepsById.values()].sort(
+    (firstStep, secondStep) => firstStep.sequenceNumber - secondStep.sequenceNumber,
+  );
+}
+
+function workflowStepFromStartedEvent(event: RunEvent): WorkflowStepView | null {
+  const stepId = getStringPayload(event, "step_id");
+  if (!stepId) {
+    return null;
+  }
+
+  const workflowVersionId = getStringPayload(event, "workflow_version_id");
+  const workflowNodeId = getStringPayload(event, "workflow_node_id");
+  if (!workflowVersionId && !workflowNodeId) {
+    return null;
+  }
+
+  const stepType = getStringPayload(event, "step_type") ?? "system";
+  return {
+    durationMs: null,
+    errorCode: null,
+    errorMessage: null,
+    label: workflowVersionId ? "Workflow runtime" : formatWorkflowStepType(stepType),
+    nodeId: workflowNodeId,
+    sequenceNumber: event.sequence_number,
+    status: "started",
+    stepId,
+    stepType,
+  };
+}
+
+function isWorkflowStepName(name: string | null): boolean {
+  return typeof name === "string" && name.startsWith("Workflow ");
+}
+
+function formatWorkflowStepType(stepType: string): string {
+  if (stepType === "llm_call") {
+    return "Workflow LLM node";
+  }
+  if (stepType === "tool_call") {
+    return "Workflow tool node";
+  }
+  return "Workflow step";
+}
+
+function formatWorkflowStepDetail(step: WorkflowStepView): string {
+  const parts = [`type ${step.stepType}`];
+  if (step.nodeId) {
+    parts.push(`node ${step.nodeId}`);
+  }
+  if (step.durationMs !== null) {
+    parts.push(`${step.durationMs} ms`);
+  }
+  return parts.join(" · ");
+}
+
+function formatOptionalNumber(value: number | null): string {
+  return value === null ? "Not available" : `${value}`;
+}
+
+function getStringPayload(event: RunEvent, key: string): string | null {
+  const value = event.payload[key];
+  return typeof value === "string" ? value : null;
+}
+
+function getArrayLengthFromRecord(value: unknown, key: string): number {
+  if (!isRecord(value)) {
+    return 0;
+  }
+
+  const nestedValue = value[key];
+  return Array.isArray(nestedValue) ? nestedValue.length : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

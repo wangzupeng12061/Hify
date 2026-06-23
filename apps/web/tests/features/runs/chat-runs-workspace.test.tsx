@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChatRunsWorkspace } from "@/features/runs/components/chat-runs-workspace";
@@ -9,7 +9,10 @@ const hookMocks = vi.hoisted(() => ({
   createConversation: vi.fn(),
   createRun: vi.fn(),
   refetchRun: vi.fn(),
+  refetchRunDiagnostics: vi.fn(),
   refetchRunEvents: vi.fn(),
+  runDiagnostics: undefined as unknown,
+  runEvents: [] as unknown[],
   startRunStream: vi.fn(),
   stopRunStream: vi.fn(),
 }));
@@ -53,10 +56,16 @@ vi.mock("@/features/runs", () => ({
     isFetching: false,
     refetch: hookMocks.refetchRun,
   }),
+  useRunDiagnostics: () => ({
+    data: hookMocks.runDiagnostics,
+    error: null,
+    isFetching: false,
+    refetch: hookMocks.refetchRunDiagnostics,
+  }),
   useRunEvents: () => ({
     data: {
       has_more: false,
-      items: [],
+      items: hookMocks.runEvents,
       next_cursor: null,
     },
     error: null,
@@ -76,6 +85,8 @@ describe("ChatRunsWorkspace", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    hookMocks.runDiagnostics = undefined;
+    hookMocks.runEvents = [];
   });
 
   it("creates conversations with agent and title input", async () => {
@@ -194,6 +205,52 @@ describe("ChatRunsWorkspace", () => {
     await waitFor(() => expect(screen.getByText("Hello team")).toBeTruthy());
     expect(screen.getByText("succeeded")).toBeTruthy();
   });
+
+  it("renders workflow snapshot and runtime steps from run diagnostics", () => {
+    hookMocks.runEvents = [
+      createRunEventResponse({
+        event_type: "diagnostic",
+        payload: {
+          chunk_type: "workflow_snapshot",
+          workflow_definition: createWorkflowDefinition(),
+          workflow_id: "workflow-1",
+          workflow_name: "Escalation Workflow",
+          workflow_version_id: "workflow-version-1",
+          workflow_version_number: 2,
+        },
+        sequence_number: 1,
+      }),
+      createRunEventResponse({
+        event_type: "step.started",
+        payload: {
+          step_id: "step-1",
+          step_type: "llm_call",
+          workflow_node_id: "llm",
+        },
+        sequence_number: 2,
+      }),
+      createRunEventResponse({
+        event_type: "step.succeeded",
+        payload: {
+          step_id: "step-1",
+        },
+        sequence_number: 3,
+      }),
+    ];
+    hookMocks.runDiagnostics = createRunDiagnosticsResponse();
+
+    render(<ChatRunsWorkspace />);
+
+    const workflowPanel = screen.getByText("Execution path").closest("section");
+    if (workflowPanel === null) {
+      throw new Error("Workflow execution panel was not rendered.");
+    }
+
+    expect(within(workflowPanel).getByText("Escalation Workflow")).toBeTruthy();
+    expect(within(workflowPanel).getByText("Workflow LLM node")).toBeTruthy();
+    expect(within(workflowPanel).getByText("type llm_call · node llm · 1200 ms")).toBeTruthy();
+    expect(within(workflowPanel).getByText("workflow-version-1")).toBeTruthy();
+  });
 });
 
 async function createConversation() {
@@ -264,5 +321,52 @@ function createRunEventResponse(override: Record<string, unknown> = {}) {
     sequence_number: 1,
     team_id: "team-1",
     ...override,
+  };
+}
+
+function createWorkflowDefinition() {
+  return {
+    edges: [{ source_node_id: "start", target_node_id: "llm" }],
+    nodes: [
+      { config: {}, id: "start", kind: "start" },
+      { config: { provider_model_id: "model-1" }, id: "llm", kind: "llm" },
+    ],
+  };
+}
+
+function createRunDiagnosticsResponse() {
+  return {
+    agent_id: "agent-1",
+    agent_version_id: "agent-version-1",
+    completed_at: null,
+    conversation_id: "conversation-1",
+    created_at: "2026-06-23T00:00:00Z",
+    duration_ms: null,
+    error_code: null,
+    error_message: null,
+    event_count: 3,
+    id: "run-1",
+    started_at: "2026-06-23T00:00:00Z",
+    status: "running",
+    step_count: 1,
+    steps: [
+      {
+        completed_at: "2026-06-23T00:00:01Z",
+        duration_ms: 1200,
+        error_code: null,
+        error_message: null,
+        id: "step-1",
+        name: "Workflow LLM node",
+        sequence_number: 1,
+        started_at: "2026-06-23T00:00:00Z",
+        status: "succeeded",
+        step_type: "llm_call",
+      },
+    ],
+    team_id: "team-1",
+    usage_cost_amount: "0",
+    usage_input_tokens: 0,
+    usage_output_tokens: 0,
+    usage_total_tokens: 0,
   };
 }

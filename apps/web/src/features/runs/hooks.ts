@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { cancelRun, createRun, executeRunStream, getRun, listRunEvents } from "./api";
+import {
+  cancelRun,
+  createRun,
+  executeRunStream,
+  getRun,
+  getRunDiagnostics,
+  listRunEvents,
+} from "./api";
 import type { ListRunEventsInput, RunEvent, RunIdInput } from "./types";
 
 export type RunStreamStatus =
@@ -23,6 +30,8 @@ export type StartRunStreamInput = RunIdInput & {
 export const runQueryKeys = {
   all: ["runs"] as const,
   detail: (request: RunIdInput) => [...runQueryKeys.all, "detail", request.runId] as const,
+  diagnostics: (request: RunIdInput) =>
+    [...runQueryKeys.all, "diagnostics", request.runId] as const,
   events: (request: ListRunEventsInput) =>
     [
       ...runQueryKeys.all,
@@ -89,6 +98,23 @@ export function useRunEvents(request: ListRunEventsInput | null) {
   });
 }
 
+export function useRunDiagnostics(request: RunIdInput | null) {
+  return useQuery({
+    enabled: request !== null,
+    queryFn: () => {
+      if (request === null) {
+        throw new Error("Run diagnostics query requires a run ID.");
+      }
+
+      return getRunDiagnostics(request);
+    },
+    queryKey:
+      request === null
+        ? [...runQueryKeys.all, "diagnostics", "idle"]
+        : runQueryKeys.diagnostics(request),
+  });
+}
+
 export function useCancelRun() {
   const queryClient = useQueryClient();
 
@@ -100,6 +126,9 @@ export function useCancelRun() {
         queryClient.invalidateQueries({ queryKey: runQueryKeys.detail({ runId: run.id }) }),
         queryClient.invalidateQueries({
           queryKey: [...runQueryKeys.all, "events", run.id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: runQueryKeys.diagnostics({ runId: run.id }),
         }),
       ]);
     },
