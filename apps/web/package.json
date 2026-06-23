@@ -6,6 +6,8 @@
     "node": ">=24.0.0 <25"
   },
   "scripts": {
+    "api:check": "pnpm api:generate && git diff --exit-code -- src/lib/api/generated/schema.d.ts",
+    "api:generate": "openapi-typescript src/lib/api/generated/openapi.json -o src/lib/api/generated/schema.d.ts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -19,6 +21,7 @@
     "clsx": "^2.1.1",
     "lucide-react": "^0.468.0",
     "next": "16.2.9",
+    "openapi-fetch": "^0.17.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "tailwind-merge": "^3.4.0",
@@ -35,6 +38,7 @@
     "eslint": "^9.39.2",
     "eslint-config-next": "16.2.9",
     "jsdom": "^28.0.0",
+    "openapi-typescript": "^7.13.0",
     "postcss": "^8.5.8",
     "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",
