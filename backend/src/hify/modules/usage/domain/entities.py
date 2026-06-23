@@ -10,6 +10,7 @@ from hify.modules.usage.domain.value_objects import (
     normalize_model_name,
     normalize_provider,
     validate_cost_amount,
+    validate_monthly_token_limit,
     validate_tokens,
 )
 from hify.shared.domain.ids import new_uuid
@@ -73,3 +74,47 @@ class UsageRecord:
             occurred_at=occurred_at,
             created_at=now,
         )
+
+
+@dataclass(slots=True)
+class UsageQuota:
+    id: UUID
+    team_id: UUID
+    monthly_token_limit: int | None
+    version: int
+    created_by: UUID
+    updated_by: UUID
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        team_id: UUID,
+        monthly_token_limit: int | None,
+        created_by: UUID,
+        now: datetime,
+    ) -> UsageQuota:
+        return cls(
+            id=new_uuid(),
+            team_id=team_id,
+            monthly_token_limit=validate_monthly_token_limit(monthly_token_limit),
+            version=0,
+            created_by=created_by,
+            updated_by=created_by,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def update_monthly_token_limit(
+        self,
+        *,
+        monthly_token_limit: int | None,
+        updated_by: UUID,
+        now: datetime,
+    ) -> None:
+        self.monthly_token_limit = validate_monthly_token_limit(monthly_token_limit)
+        self.updated_by = updated_by
+        self.version += 1
+        self.updated_at = now

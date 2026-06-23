@@ -46,3 +46,11 @@ def validate_cost_amount(value: Decimal) -> Decimal:
     if value < Decimal("0"):
         raise UsageValidationError("cost amount must be non-negative")
     return value
+
+
+def validate_monthly_token_limit(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if value <= 0:
+        raise UsageValidationError("monthly token limit must be positive")
+    return value

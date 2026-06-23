@@ -13,3 +13,7 @@ class UsageNotFoundError(NotFoundError):
 
 class UsagePermissionDeniedError(PermissionDeniedError):
     code = "USAGE_PERMISSION_DENIED"
+
+
+class UsageQuotaNotFoundError(NotFoundError):
+    code = "USAGE_QUOTA_NOT_FOUND"

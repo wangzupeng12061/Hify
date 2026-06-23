@@ -87,6 +87,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         tool_executor=tools.tool_executor,
         knowledge_retriever=knowledge.knowledge_retriever,
         usage_recorder=usage.usage_recorder,
+        usage_quota_checker=usage.usage_quota_checker,
     )
     return HifyContainer(
         settings=resolved_settings,

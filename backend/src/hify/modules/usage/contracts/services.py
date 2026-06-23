@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
 
-from hify.modules.usage.contracts.dto import UsageRecordInfo, UsageSummaryInfo
+from hify.modules.usage.contracts.dto import UsageQuotaStatusInfo, UsageRecordInfo, UsageSummaryInfo
 
 
 class UsageRecorder(Protocol):
@@ -32,3 +32,12 @@ class UsageReader(Protocol):
     async def get_team_summary(self, *, team_id: UUID) -> UsageSummaryInfo: ...
 
     async def get_run_summary(self, *, team_id: UUID, run_id: UUID) -> UsageSummaryInfo: ...
+
+
+class UsageQuotaChecker(Protocol):
+    async def ensure_team_quota_available(
+        self,
+        *,
+        team_id: UUID,
+        at: datetime,
+    ) -> UsageQuotaStatusInfo: ...

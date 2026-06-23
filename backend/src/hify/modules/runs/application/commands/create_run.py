@@ -12,6 +12,7 @@ from hify.modules.runs.application.ports import RunsUnitOfWorkFactory
 from hify.modules.runs.contracts.dto import RunInfo
 from hify.modules.runs.domain.entities import AgentRun
 from hify.modules.runs.domain.value_objects import RunEventType, normalize_idempotency_key
+from hify.modules.usage.contracts.services import UsageQuotaChecker
 from hify.shared.domain.clock import Clock
 
 
@@ -28,11 +29,13 @@ class CreateRunHandler:
         unit_of_work_factory: RunsUnitOfWorkFactory,
         conversation_reader: ConversationReader,
         agent_catalog: AgentCatalog,
+        usage_quota_checker: UsageQuotaChecker,
         clock: Clock,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._conversation_reader = conversation_reader
         self._agent_catalog = agent_catalog
+        self._usage_quota_checker = usage_quota_checker
         self._clock = clock
 
     async def handle(self, command: CreateRunCommand) -> RunInfo:
@@ -57,6 +60,12 @@ class CreateRunHandler:
             if existing_run is not None:
                 return run_info_from_domain(existing_run)
 
+        await self._usage_quota_checker.ensure_team_quota_available(
+            team_id=command.actor.team_id,
+            at=now,
+        )
+
+        async with self._unit_of_work_factory() as unit_of_work:
             run = AgentRun.create(
                 team_id=command.actor.team_id,
                 conversation_id=conversation.id,
