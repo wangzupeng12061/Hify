@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type FormEvent } from "react";
 
 import {
   useAppendConversationMessage,
@@ -8,7 +8,7 @@ import {
   useCreateConversation,
 } from "@/features/conversations";
 import type { Conversation, ConversationMessage } from "@/features/conversations";
-import { useCancelRun, useCreateRun, useRun, useRunEvents } from "@/features/runs";
+import { useCancelRun, useCreateRun, useRun, useRunEvents, useRunStream } from "@/features/runs";
 import { HifyApiError } from "@/lib/api/errors";
 
 import type { Run, RunEvent } from "../types";
@@ -40,6 +40,7 @@ export function ChatRunsWorkspace() {
   const appendMessageMutation = useAppendConversationMessage();
   const createRunMutation = useCreateRun();
   const cancelRunMutation = useCancelRun();
+  const runStream = useRunStream();
   const [conversationForm, setConversationForm] = useState(initialConversationForm);
   const [messageForm, setMessageForm] = useState(initialMessageForm);
   const [runForm, setRunForm] = useState<RunFormState>(() => ({
@@ -48,6 +49,7 @@ export function ChatRunsWorkspace() {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
   const [run, setRun] = useState<Run | null>(null);
+  const [streamedEvents, setStreamedEvents] = useState<RunEvent[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
 
   const conversationMessagesQuery = useConversationMessages(
@@ -55,9 +57,17 @@ export function ChatRunsWorkspace() {
   );
   const runQuery = useRun(run ? { runId: run.id } : null);
   const runEventsQuery = useRunEvents(run ? { runId: run.id, limit: 50 } : null);
-  const visibleRun = runQuery.data ?? run;
   const messages = conversationMessagesQuery.data?.items ?? localMessages;
-  const events = runEventsQuery.data?.items ?? [];
+  const events = useMemo(
+    () => mergeRunEvents(runEventsQuery.data?.items ?? [], streamedEvents),
+    [runEventsQuery.data?.items, streamedEvents],
+  );
+  const visibleRun = useMemo(
+    () => getVisibleRun(runQuery.data ?? run, events),
+    [events, run, runQuery.data],
+  );
+  const assistantOutput = useMemo(() => getAssistantOutput(events), [events]);
+  const usageSummary = useMemo(() => getUsageSummary(events), [events]);
   const operationError =
     createConversationMutation.error ??
     appendMessageMutation.error ??
@@ -65,11 +75,17 @@ export function ChatRunsWorkspace() {
     cancelRunMutation.error ??
     conversationMessagesQuery.error ??
     runQuery.error ??
-    runEventsQuery.error;
+    runEventsQuery.error ??
+    runStream.error;
+
+  const handleRunStreamEvent = useCallback((event: RunEvent) => {
+    setStreamedEvents((currentEvents) => mergeRunEvents(currentEvents, [event]));
+  }, []);
 
   async function handleCreateConversation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError(null);
+    runStream.stop();
 
     try {
       const createdConversation = await createConversationMutation.mutateAsync({
@@ -79,6 +95,7 @@ export function ChatRunsWorkspace() {
       setConversation(createdConversation);
       setLocalMessages([]);
       setRun(null);
+      setStreamedEvents([]);
       setRunForm({ idempotencyKey: createIdempotencyKey("run") });
     } catch {
       return;
@@ -122,7 +139,12 @@ export function ChatRunsWorkspace() {
         idempotency_key: runForm.idempotencyKey.trim() || createIdempotencyKey("run"),
       });
       setRun(createdRun);
+      setStreamedEvents([]);
       setRunForm({ idempotencyKey: createIdempotencyKey("run") });
+      void runStream.start({
+        onEvent: handleRunStreamEvent,
+        runId: createdRun.id,
+      });
     } catch {
       return;
     }
@@ -139,6 +161,9 @@ export function ChatRunsWorkspace() {
     try {
       const cancelledRun = await cancelRunMutation.mutateAsync({ runId: visibleRun.id });
       setRun(cancelledRun);
+      runStream.stop();
+      void runQuery.refetch();
+      void runEventsQuery.refetch();
     } catch {
       return;
     }
@@ -150,8 +175,8 @@ export function ChatRunsWorkspace() {
         <p className="hero__eyebrow">Runs</p>
         <h2>Start a conversation and run an agent.</h2>
         <p>
-          This first chat surface uses REST APIs for the MVP path. Streaming execution will be
-          layered in after the SSE transport is hardened.
+          This chat surface starts a run through REST, then streams Hify run events through SSE for
+          live assistant output and execution diagnostics.
         </p>
       </section>
 
@@ -181,10 +206,22 @@ export function ChatRunsWorkspace() {
           onChange={setRunForm}
           onSubmit={handleCreateRun}
           run={visibleRun}
+          streamStatus={runStream.status}
         />
       </section>
 
-      <RunSummary conversation={conversation} run={visibleRun} />
+      <RunSummary
+        assistantOutput={assistantOutput}
+        conversation={conversation}
+        events={events}
+        run={visibleRun}
+        streamStatus={runStream.status}
+      />
+      <AssistantOutputPanel
+        assistantOutput={assistantOutput}
+        streamStatus={runStream.status}
+        usageSummary={usageSummary}
+      />
       <MessageList isLoading={conversationMessagesQuery.isFetching} messages={messages} />
       <RunEventList
         events={events}
@@ -285,6 +322,7 @@ function RunForm({
   onChange,
   onSubmit,
   run,
+  streamStatus,
 }: {
   form: RunFormState;
   isCancelling: boolean;
@@ -293,6 +331,7 @@ function RunForm({
   onChange: (form: RunFormState) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   run: Run | null;
+  streamStatus: string;
 }) {
   return (
     <form className="panel form-panel" onSubmit={onSubmit}>
@@ -319,20 +358,35 @@ function RunForm({
         {isCancelling ? "Cancelling..." : "Cancel run"}
       </button>
       {run ? <ResultLine label="Run ID" value={run.id} /> : null}
+      <ResultLine label="Stream status" value={streamStatus} />
     </form>
   );
 }
 
-function RunSummary({ conversation, run }: { conversation: Conversation | null; run: Run | null }) {
+function RunSummary({
+  assistantOutput,
+  conversation,
+  events,
+  run,
+  streamStatus,
+}: {
+  assistantOutput: string;
+  conversation: Conversation | null;
+  events: RunEvent[];
+  run: Run | null;
+  streamStatus: string;
+}) {
   const summaryItems = useMemo(
     () => [
       { label: "Conversation ID", value: conversation?.id ?? "Not created" },
       { label: "Agent ID", value: conversation?.agent_id ?? "Not available" },
       { label: "Run ID", value: run?.id ?? "Not started" },
       { label: "Run status", value: run?.status ?? "Not started" },
-      { label: "Run events", value: run ? `${run.event_count}` : "0" },
+      { label: "Stream status", value: streamStatus },
+      { label: "Run events", value: `${Math.max(run?.event_count ?? 0, events.length)}` },
+      { label: "Assistant chars", value: `${assistantOutput.length}` },
     ],
-    [conversation, run],
+    [assistantOutput.length, conversation, events.length, run, streamStatus],
   );
 
   return (
@@ -349,6 +403,34 @@ function RunSummary({ conversation, run }: { conversation: Conversation | null; 
           <ResultField key={item.label} label={item.label} value={item.value} />
         ))}
       </dl>
+    </section>
+  );
+}
+
+function AssistantOutputPanel({
+  assistantOutput,
+  streamStatus,
+  usageSummary,
+}: {
+  assistantOutput: string;
+  streamStatus: string;
+  usageSummary: string | null;
+}) {
+  return (
+    <section className="panel">
+      <div className="panel__header">
+        <div>
+          <p className="panel__eyebrow">Assistant</p>
+          <h2>Live response</h2>
+        </div>
+        <span className="status-pill">{streamStatus}</span>
+      </div>
+      {assistantOutput ? (
+        <div className="assistant-output">{assistantOutput}</div>
+      ) : (
+        <p className="muted">No assistant output streamed yet.</p>
+      )}
+      {usageSummary ? <p className="form-result">{usageSummary}</p> : null}
     </section>
   );
 }
@@ -415,6 +497,7 @@ function RunEventList({
               <span>
                 #{event.sequence_number} {event.event_type}
               </span>
+              <p>{describeRunEvent(event)}</p>
               <pre>{JSON.stringify(event.payload, null, 2)}</pre>
             </li>
           ))}
@@ -463,4 +546,100 @@ function createIdempotencyKey(prefix: string): string {
       : Math.random().toString(36).slice(2);
 
   return `${prefix}-${randomValue}`;
+}
+
+function mergeRunEvents(...eventGroups: RunEvent[][]): RunEvent[] {
+  const eventByKey = new Map<string, RunEvent>();
+
+  eventGroups.flat().forEach((event) => {
+    eventByKey.set(`${event.run_id}:${event.sequence_number}`, event);
+  });
+
+  return [...eventByKey.values()].sort(
+    (firstEvent, secondEvent) => firstEvent.sequence_number - secondEvent.sequence_number,
+  );
+}
+
+function getAssistantOutput(events: RunEvent[]): string {
+  return events
+    .filter((event) => event.event_type === "output.text_delta")
+    .map((event) => event.payload.text)
+    .filter((text): text is string => typeof text === "string")
+    .join("");
+}
+
+function getUsageSummary(events: RunEvent[]): string | null {
+  const usageEvent = [...events]
+    .reverse()
+    .find((event) => event.payload.chunk_type === "usage");
+  if (!usageEvent) {
+    return null;
+  }
+
+  const inputTokens = usageEvent.payload.input_tokens;
+  const outputTokens = usageEvent.payload.output_tokens;
+  const totalTokens = usageEvent.payload.total_tokens;
+  if (
+    typeof inputTokens !== "number" ||
+    typeof outputTokens !== "number" ||
+    typeof totalTokens !== "number"
+  ) {
+    return null;
+  }
+
+  return `Usage: ${inputTokens} input / ${outputTokens} output / ${totalTokens} total tokens`;
+}
+
+function getVisibleRun(run: Run | null, events: RunEvent[]): Run | null {
+  if (!run) {
+    return null;
+  }
+
+  const status = getRunStatusFromEvents(events) ?? run.status;
+  const eventCount = Math.max(run.event_count, events.length);
+  return {
+    ...run,
+    event_count: eventCount,
+    status,
+  };
+}
+
+function getRunStatusFromEvents(events: RunEvent[]): string | null {
+  for (const event of [...events].reverse()) {
+    if (event.event_type === "run.succeeded") {
+      return "succeeded";
+    }
+    if (event.event_type === "run.failed") {
+      return "failed";
+    }
+    if (event.event_type === "run.cancelled") {
+      return "cancelled";
+    }
+    if (event.event_type === "run.interrupted") {
+      return "interrupted";
+    }
+    if (event.event_type === "run.started") {
+      return "running";
+    }
+  }
+
+  return null;
+}
+
+function describeRunEvent(event: RunEvent): string {
+  if (event.event_type === "output.text_delta" && typeof event.payload.text === "string") {
+    return event.payload.text;
+  }
+
+  const chunkType = event.payload.chunk_type;
+  if (typeof chunkType === "string") {
+    return chunkType.replaceAll("_", " ");
+  }
+
+  const errorCode = event.payload.error_code;
+  if (typeof errorCode === "string") {
+    return `Error: ${errorCode}`;
+  }
+
+  return event.event_type;
 }

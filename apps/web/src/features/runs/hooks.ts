@@ -1,9 +1,24 @@
 "use client";
 
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { cancelRun, createRun, getRun, listRunEvents } from "./api";
-import type { ListRunEventsInput, RunIdInput } from "./types";
+import { cancelRun, createRun, executeRunStream, getRun, listRunEvents } from "./api";
+import type { ListRunEventsInput, RunEvent, RunIdInput } from "./types";
+
+export type RunStreamStatus =
+  | "idle"
+  | "connecting"
+  | "streaming"
+  | "completed"
+  | "aborted"
+  | "error";
+
+export type StartRunStreamInput = RunIdInput & {
+  onComplete?: () => void;
+  onError?: (error: Error) => void;
+  onEvent: (event: RunEvent) => void;
+};
 
 export const runQueryKeys = {
   all: ["runs"] as const,
@@ -89,4 +104,82 @@ export function useCancelRun() {
       ]);
     },
   });
+}
+
+export function useRunStream() {
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const streamRequestIdRef = useRef(0);
+  const [status, setStatus] = useState<RunStreamStatus>("idle");
+  const [error, setError] = useState<Error | null>(null);
+
+  const stop = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  }, []);
+
+  const start = useCallback(
+    async (request: StartRunStreamInput) => {
+      stop();
+
+      const abortController = new AbortController();
+      const streamRequestId = streamRequestIdRef.current + 1;
+      streamRequestIdRef.current = streamRequestId;
+      abortControllerRef.current = abortController;
+      setError(null);
+      setStatus("connecting");
+
+      try {
+        await executeRunStream({
+          onEvent: (event) => {
+            if (streamRequestIdRef.current !== streamRequestId) {
+              return;
+            }
+
+            setStatus("streaming");
+            request.onEvent(event);
+          },
+          runId: request.runId,
+          signal: abortController.signal,
+        });
+
+        if (streamRequestIdRef.current !== streamRequestId) {
+          return;
+        }
+
+        abortControllerRef.current = null;
+        setStatus(abortController.signal.aborted ? "aborted" : "completed");
+        request.onComplete?.();
+      } catch (caughtError) {
+        if (streamRequestIdRef.current !== streamRequestId) {
+          return;
+        }
+
+        abortControllerRef.current = null;
+        if (isAbortError(caughtError)) {
+          setStatus("aborted");
+          return;
+        }
+
+        const error = caughtError instanceof Error ? caughtError : new Error("Run stream failed.");
+        setError(error);
+        setStatus("error");
+        request.onError?.(error);
+      }
+    },
+    [stop],
+  );
+
+  useEffect(() => stop, [stop]);
+
+  return {
+    error,
+    isStreaming: status === "connecting" || status === "streaming",
+    start,
+    status,
+    stop,
+  };
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
