@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 
 from hify.modules.runs.domain.errors import RunValidationError
@@ -92,6 +93,11 @@ def normalize_error_message(value: str | None) -> str | None:
     if len(normalized) > 1000:
         raise RunValidationError("error message must be at most 1000 characters")
     return normalized
+
+
+def duration_ms_between(started_at: datetime, finished_at: datetime) -> int:
+    duration_seconds = finished_at.timestamp() - started_at.timestamp()
+    return max(int(duration_seconds * 1000), 0)
 
 
 def parse_event_cursor(value: str | None) -> int | None:

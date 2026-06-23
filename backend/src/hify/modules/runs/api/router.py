@@ -13,6 +13,7 @@ from hify.modules.identity.contracts.dto import ActorContext
 from hify.modules.runs.api.dependencies import RequestAuthenticator
 from hify.modules.runs.api.schemas import (
     CreateRunRequest,
+    RunDiagnosticsResponse,
     RunEventPageResponse,
     RunEventResponse,
     RunResponse,
@@ -25,6 +26,10 @@ from hify.modules.runs.application.executor import (
     RunExecutor,
 )
 from hify.modules.runs.application.queries.get_run import GetRunForActorHandler, GetRunForActorQuery
+from hify.modules.runs.application.queries.get_run_diagnostics import (
+    GetRunDiagnosticsHandler,
+    GetRunDiagnosticsQuery,
+)
 from hify.modules.runs.application.queries.list_run_events import (
     ListRunEventsForActorHandler,
     ListRunEventsForActorQuery,
@@ -50,6 +55,7 @@ def create_runs_router(
     create_run_handler: CreateRunHandler,
     cancel_run_handler: CancelRunHandler,
     get_run_handler: GetRunForActorHandler,
+    get_run_diagnostics_handler: GetRunDiagnosticsHandler,
     list_events_handler: ListRunEventsForActorHandler,
     run_executor: RunExecutor,
     request_authenticator: RequestAuthenticator,
@@ -89,6 +95,20 @@ def create_runs_router(
             query = GetRunForActorQuery(actor=actor, run_id=run_id)
             run = await get_run_handler.handle(query)
             return RunResponse.model_validate(run)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except HifyError as exc:
+            raise _to_http_error(exc) from exc
+
+    @router.get("/{run_id}/diagnostics", response_model=RunDiagnosticsResponse)
+    async def get_run_diagnostics(
+        run_id: UUID,
+        actor: ActorContext = Depends(get_current_actor),
+    ) -> RunDiagnosticsResponse:
+        try:
+            query = GetRunDiagnosticsQuery(actor=actor, run_id=run_id)
+            diagnostics = await get_run_diagnostics_handler.handle(query)
+            return RunDiagnosticsResponse.model_validate(diagnostics)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except HifyError as exc:

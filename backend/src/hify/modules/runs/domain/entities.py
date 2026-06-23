@@ -12,6 +12,7 @@ from hify.modules.runs.domain.value_objects import (
     RunStatus,
     RunStepStatus,
     RunStepType,
+    duration_ms_between,
     normalize_error_code,
     normalize_error_message,
     normalize_idempotency_key,
@@ -37,6 +38,7 @@ class AgentRun:
     updated_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    duration_ms: int | None
     error_code: str | None
     error_message: str | None
 
@@ -68,6 +70,7 @@ class AgentRun:
             updated_at=now,
             started_at=None,
             completed_at=None,
+            duration_ms=None,
             error_code=None,
             error_message=None,
         )
@@ -83,6 +86,7 @@ class AgentRun:
         self._ensure_can_finish()
         self.status = RunStatus.SUCCEEDED
         self.completed_at = now
+        self.duration_ms = self._duration_ms(now)
         self._mark_updated(now)
 
     def mark_failed(self, *, error_code: str, error_message: str | None, now: datetime) -> None:
@@ -91,6 +95,7 @@ class AgentRun:
         self.error_code = normalize_error_code(error_code)
         self.error_message = normalize_error_message(error_message)
         self.completed_at = now
+        self.duration_ms = self._duration_ms(now)
         self._mark_updated(now)
 
     def mark_interrupted(
@@ -105,13 +110,17 @@ class AgentRun:
         self.error_code = normalize_error_code(error_code)
         self.error_message = normalize_error_message(error_message)
         self.completed_at = now
+        self.duration_ms = self._duration_ms(now)
         self._mark_updated(now)
 
     def cancel(self, now: datetime) -> None:
         if self.status in TERMINAL_RUN_STATUSES:
             raise RunStateConflictError("terminal runs cannot be cancelled")
         self.status = RunStatus.CANCELLED
+        self.error_code = "RUN_CANCELLED"
+        self.error_message = "run was cancelled"
         self.completed_at = now
+        self.duration_ms = self._duration_ms(now)
         self._mark_updated(now)
 
     def create_step(
@@ -160,6 +169,11 @@ class AgentRun:
         self.version += 1
         self.updated_at = now
 
+    def _duration_ms(self, finished_at: datetime) -> int | None:
+        if self.started_at is None:
+            return None
+        return duration_ms_between(self.started_at, finished_at)
+
 
 @dataclass(slots=True)
 class RunStep:
@@ -172,6 +186,7 @@ class RunStep:
     name: str | None
     started_at: datetime
     completed_at: datetime | None
+    duration_ms: int | None
     error_code: str | None
     error_message: str | None
 
@@ -196,6 +211,7 @@ class RunStep:
             name=normalize_step_name(name),
             started_at=now,
             completed_at=None,
+            duration_ms=None,
             error_code=None,
             error_message=None,
         )
@@ -205,6 +221,7 @@ class RunStep:
             raise RunStateConflictError("only started steps can succeed")
         self.status = RunStepStatus.SUCCEEDED
         self.completed_at = now
+        self.duration_ms = duration_ms_between(self.started_at, now)
 
     def mark_failed(self, *, error_code: str, error_message: str | None, now: datetime) -> None:
         if self.status is not RunStepStatus.STARTED:
@@ -213,12 +230,16 @@ class RunStep:
         self.error_code = normalize_error_code(error_code)
         self.error_message = normalize_error_message(error_message)
         self.completed_at = now
+        self.duration_ms = duration_ms_between(self.started_at, now)
 
     def cancel(self, now: datetime) -> None:
         if self.status is not RunStepStatus.STARTED:
             raise RunStateConflictError("only started steps can be cancelled")
         self.status = RunStepStatus.CANCELLED
+        self.error_code = "RUN_CANCELLED"
+        self.error_message = "run was cancelled"
         self.completed_at = now
+        self.duration_ms = duration_ms_between(self.started_at, now)
 
 
 @dataclass(slots=True)

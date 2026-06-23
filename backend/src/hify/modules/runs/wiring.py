@@ -15,6 +15,7 @@ from hify.modules.runs.application.commands.cancel_run import CancelRunHandler
 from hify.modules.runs.application.commands.create_run import CreateRunHandler
 from hify.modules.runs.application.executor import RunExecutor
 from hify.modules.runs.application.queries.get_run import GetRunForActorHandler, GetRunHandler
+from hify.modules.runs.application.queries.get_run_diagnostics import GetRunDiagnosticsHandler
 from hify.modules.runs.application.queries.list_run_events import (
     ListRunEventsForActorHandler,
     ListRunEventsHandler,
@@ -23,7 +24,7 @@ from hify.modules.runs.application.queries.list_run_events import (
 from hify.modules.runs.contracts.services import RunReader
 from hify.modules.runs.infrastructure.database.uow import SqlAlchemyRunsUnitOfWork
 from hify.modules.tools.contracts.services import ToolExecutor
-from hify.modules.usage.contracts.services import UsageQuotaChecker, UsageRecorder
+from hify.modules.usage.contracts.services import UsageQuotaChecker, UsageReader, UsageRecorder
 from hify.shared.domain.clock import Clock, SystemClock
 
 
@@ -44,6 +45,7 @@ def create_runs_module(
     tool_executor: ToolExecutor,
     knowledge_retriever: KnowledgeRetriever,
     usage_recorder: UsageRecorder,
+    usage_reader: UsageReader,
     usage_quota_checker: UsageQuotaChecker,
     clock: Clock | None = None,
 ) -> RunsModule:
@@ -62,6 +64,7 @@ def create_runs_module(
     cancel_run_handler = CancelRunHandler(unit_of_work_factory, module_clock)
     get_run_handler = GetRunHandler(unit_of_work_factory)
     get_run_for_actor_handler = GetRunForActorHandler(get_run_handler)
+    get_run_diagnostics_handler = GetRunDiagnosticsHandler(unit_of_work_factory, usage_reader)
     list_events_handler = ListRunEventsHandler(unit_of_work_factory)
     list_events_for_actor_handler = ListRunEventsForActorHandler(list_events_handler)
     run_reader = RunReaderService(get_run_handler, list_events_handler)
@@ -80,6 +83,7 @@ def create_runs_module(
         create_run_handler=create_run_handler,
         cancel_run_handler=cancel_run_handler,
         get_run_handler=get_run_for_actor_handler,
+        get_run_diagnostics_handler=get_run_diagnostics_handler,
         list_events_handler=list_events_for_actor_handler,
         run_executor=run_executor,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),

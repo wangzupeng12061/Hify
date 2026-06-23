@@ -83,6 +83,7 @@ def test_execute_stream_returns_run_events_as_sse() -> None:
             create_run_handler=UnusedHandler(),
             cancel_run_handler=UnusedHandler(),
             get_run_handler=UnusedHandler(),
+            get_run_diagnostics_handler=UnusedHandler(),
             list_events_handler=list_events_handler,
             run_executor=run_executor,
             request_authenticator=StaticAuthenticator(),
@@ -135,6 +136,7 @@ def _run_info(status: str) -> RunInfo:
         updated_at=datetime(2026, 6, 22, tzinfo=UTC),
         started_at=None,
         completed_at=None,
+        duration_ms=None,
         error_code=None,
         error_message=None,
     )

@@ -792,7 +792,7 @@ class RunExecutor:
                     "step_id": str(step.id),
                     "tool_call_id": tool_call.tool_call_id,
                     "tool_id": tool_call.name,
-                    "content": content,
+                    "content_size": len(content),
                 },
                 now=now,
             )

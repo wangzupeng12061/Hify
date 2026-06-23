@@ -43,6 +43,10 @@ from hify.modules.runs.application.queries.get_run import (
     GetRunForActorQuery,
     GetRunHandler,
 )
+from hify.modules.runs.application.queries.get_run_diagnostics import (
+    GetRunDiagnosticsHandler,
+    GetRunDiagnosticsQuery,
+)
 from hify.modules.runs.application.queries.list_run_events import (
     ListRunEventsHandler,
     ListRunEventsQuery,
@@ -50,10 +54,10 @@ from hify.modules.runs.application.queries.list_run_events import (
 )
 from hify.modules.runs.domain.entities import AgentRun, RunEvent, RunStep
 from hify.modules.runs.domain.errors import RunPermissionDeniedError
-from hify.modules.runs.domain.value_objects import RunEventType
+from hify.modules.runs.domain.value_objects import RunEventType, RunStepType
 from hify.modules.tools.contracts.dto import ToolExecutionRequest, ToolExecutionResult
 from hify.modules.tools.contracts.errors import ToolExecutionHttpError
-from hify.modules.usage.contracts.dto import UsageQuotaStatusInfo, UsageRecordInfo
+from hify.modules.usage.contracts.dto import UsageQuotaStatusInfo, UsageRecordInfo, UsageSummaryInfo
 from hify.modules.usage.contracts.errors import UsageContractError, UsageQuotaExceededError
 from hify.shared.domain.clock import Clock
 
@@ -190,6 +194,28 @@ class RecordingUsageQuotaChecker:
             is_exceeded=False,
             period_start=datetime(2026, 6, 1, tzinfo=UTC),
             period_end=datetime(2026, 7, 1, tzinfo=UTC),
+        )
+
+
+class FakeUsageReader:
+    async def get_team_summary(self, *, team_id: UUID) -> UsageSummaryInfo:
+        return UsageSummaryInfo(
+            team_id=team_id,
+            run_id=None,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            cost_amount=Decimal("0"),
+        )
+
+    async def get_run_summary(self, *, team_id: UUID, run_id: UUID) -> UsageSummaryInfo:
+        return UsageSummaryInfo(
+            team_id=team_id,
+            run_id=run_id,
+            input_tokens=11,
+            output_tokens=7,
+            total_tokens=18,
+            cost_amount=Decimal("0.12345678"),
         )
 
 
@@ -717,6 +743,44 @@ async def test_run_reader_returns_run_and_events() -> None:
     assert fetched == run
     assert len(events.items) == 1
     assert events.items[0].event_type == "run.created"
+
+
+@pytest.mark.asyncio
+async def test_run_diagnostics_returns_run_summary_and_steps() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    run = await _create_run(unit_of_work, actor)
+    domain_run = await unit_of_work.runs.get_by_id(run.id)
+    assert domain_run is not None
+    step = domain_run.create_step(
+        step_type=RunStepType.LLM_CALL,
+        name="Model call",
+        now=FixedClock().now(),
+    )
+    step.mark_failed(
+        error_code="PROVIDER_UNAVAILABLE_ERROR",
+        error_message="provider unavailable",
+        now=FixedClock().now(),
+    )
+    domain_run.mark_failed(
+        error_code="PROVIDER_UNAVAILABLE_ERROR",
+        error_message="provider unavailable",
+        now=FixedClock().now(),
+    )
+    await unit_of_work.runs.save(domain_run)
+    await unit_of_work.steps.add(step)
+
+    diagnostics = await GetRunDiagnosticsHandler(lambda: unit_of_work, FakeUsageReader()).handle(
+        GetRunDiagnosticsQuery(actor=actor, run_id=run.id)
+    )
+
+    assert diagnostics.status == "failed"
+    assert diagnostics.error_code == "PROVIDER_UNAVAILABLE_ERROR"
+    assert diagnostics.steps[0].step_type == "llm_call"
+    assert diagnostics.steps[0].error_code == "PROVIDER_UNAVAILABLE_ERROR"
+    assert diagnostics.steps[0].duration_ms == 0
+    assert diagnostics.usage_total_tokens == 18
+    assert diagnostics.usage_cost_amount == Decimal("0.12345678")
 
 
 @pytest.mark.asyncio

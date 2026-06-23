@@ -38,6 +38,7 @@ class SqlAlchemyRunRepository:
         model.updated_at = run.updated_at
         model.started_at = run.started_at
         model.completed_at = run.completed_at
+        model.duration_ms = run.duration_ms
         model.error_code = run.error_code
         model.error_message = run.error_message
 
@@ -79,6 +80,7 @@ class SqlAlchemyRunStepRepository:
             return
         model.status = step.status.value
         model.completed_at = step.completed_at
+        model.duration_ms = step.duration_ms
         model.error_code = step.error_code
         model.error_message = step.error_message
 
@@ -141,6 +143,7 @@ def _run_to_model(run: AgentRun) -> RunModel:
         updated_at=run.updated_at,
         started_at=run.started_at,
         completed_at=run.completed_at,
+        duration_ms=run.duration_ms,
         error_code=run.error_code,
         error_message=run.error_message,
     )
@@ -163,6 +166,7 @@ def _run_from_model(model: RunModel) -> AgentRun:
         updated_at=model.updated_at,
         started_at=model.started_at,
         completed_at=model.completed_at,
+        duration_ms=model.duration_ms,
         error_code=model.error_code,
         error_message=model.error_message,
     )
@@ -179,6 +183,7 @@ def _step_to_model(step: RunStep) -> RunStepModel:
         name=step.name,
         started_at=step.started_at,
         completed_at=step.completed_at,
+        duration_ms=step.duration_ms,
         error_code=step.error_code,
         error_message=step.error_message,
     )
@@ -195,6 +200,7 @@ def _step_from_model(model: RunStepModel) -> RunStep:
         name=model.name,
         started_at=model.started_at,
         completed_at=model.completed_at,
+        duration_ms=model.duration_ms,
         error_code=model.error_code,
         error_message=model.error_message,
     )
