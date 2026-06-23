@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hify.modules.usage.infrastructure.database.models import UsageRecordModel
+from hify.modules.usage.infrastructure.database.models import UsageQuotaModel, UsageRecordModel
 from hify.modules.usage.infrastructure.database.repositories import SqlAlchemyUsageRecordRepository
 
 
@@ -32,6 +33,12 @@ def test_usage_model_has_idempotency_and_summary_indexes() -> None:
     assert "ix_usage_records__team_run_occurred_id" in index_names
 
 
+def test_usage_quota_model_has_team_unique_index() -> None:
+    index_names = {index.name for index in UsageQuotaModel.__table__.indexes}
+
+    assert "uq_usage_quotas__team" in index_names
+
+
 def test_run_summary_filters_by_team_and_run() -> None:
     session = SessionSpy()
     repository = SqlAlchemyUsageRecordRepository(cast(AsyncSession, session))
@@ -48,6 +55,25 @@ def test_run_summary_filters_by_team_and_run() -> None:
     assert "usage_records.team_id" in sql
     assert "usage_records.run_id" in sql
     assert "sum(usage_records.input_tokens)" in sql
+
+
+def test_team_period_summary_filters_by_month_range() -> None:
+    session = SessionSpy()
+    repository = SqlAlchemyUsageRecordRepository(cast(AsyncSession, session))
+
+    _run(
+        repository.summarize_for_team_period(
+            team_id=UUID("00000000-0000-7000-8000-000000000001"),
+            period_start=datetime(2026, 6, 1, tzinfo=UTC),
+            period_end=datetime(2026, 7, 1, tzinfo=UTC),
+        ),
+        session,
+    )
+
+    sql = _compile_sql(session.statement)
+    assert "usage_records.team_id" in sql
+    assert "usage_records.occurred_at >=" in sql
+    assert "usage_records.occurred_at <" in sql
 
 
 def _run(awaitable: Any, session: SessionSpy) -> None:

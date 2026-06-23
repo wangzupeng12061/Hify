@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from hify.modules.usage.contracts.dto import UsageRecordInfo
-from hify.modules.usage.domain.entities import UsageRecord
+from hify.modules.usage.contracts.dto import UsageQuotaInfo, UsageRecordInfo
+from hify.modules.usage.domain.entities import UsageQuota, UsageRecord
 
 
 def usage_record_info_from_domain(record: UsageRecord) -> UsageRecordInfo:
@@ -22,4 +22,17 @@ def usage_record_info_from_domain(record: UsageRecord) -> UsageRecordInfo:
         idempotency_key=record.idempotency_key,
         occurred_at=record.occurred_at,
         created_at=record.created_at,
+    )
+
+
+def usage_quota_info_from_domain(quota: UsageQuota) -> UsageQuotaInfo:
+    return UsageQuotaInfo(
+        id=quota.id,
+        team_id=quota.team_id,
+        monthly_token_limit=quota.monthly_token_limit,
+        version=quota.version,
+        created_by=quota.created_by,
+        updated_by=quota.updated_by,
+        created_at=quota.created_at,
+        updated_at=quota.updated_at,
     )

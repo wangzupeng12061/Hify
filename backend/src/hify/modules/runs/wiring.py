@@ -23,7 +23,7 @@ from hify.modules.runs.application.queries.list_run_events import (
 from hify.modules.runs.contracts.services import RunReader
 from hify.modules.runs.infrastructure.database.uow import SqlAlchemyRunsUnitOfWork
 from hify.modules.tools.contracts.services import ToolExecutor
-from hify.modules.usage.contracts.services import UsageRecorder
+from hify.modules.usage.contracts.services import UsageQuotaChecker, UsageRecorder
 from hify.shared.domain.clock import Clock, SystemClock
 
 
@@ -44,6 +44,7 @@ def create_runs_module(
     tool_executor: ToolExecutor,
     knowledge_retriever: KnowledgeRetriever,
     usage_recorder: UsageRecorder,
+    usage_quota_checker: UsageQuotaChecker,
     clock: Clock | None = None,
 ) -> RunsModule:
     module_clock = clock or SystemClock()
@@ -55,6 +56,7 @@ def create_runs_module(
         unit_of_work_factory,
         conversation_reader,
         agent_catalog,
+        usage_quota_checker,
         module_clock,
     )
     cancel_run_handler = CancelRunHandler(unit_of_work_factory, module_clock)

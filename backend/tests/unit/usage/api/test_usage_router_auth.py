@@ -20,6 +20,8 @@ def test_usage_routes_require_configured_authentication() -> None:
         create_usage_router(
             get_team_summary_handler=UnusedHandler(),
             get_run_summary_handler=UnusedHandler(),
+            get_quota_status_handler=UnusedHandler(),
+            set_quota_handler=UnusedHandler(),
             request_authenticator=AuthenticationNotConfiguredAuthenticator(),
         )
     )

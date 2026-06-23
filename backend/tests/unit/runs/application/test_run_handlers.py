@@ -53,8 +53,8 @@ from hify.modules.runs.domain.errors import RunPermissionDeniedError
 from hify.modules.runs.domain.value_objects import RunEventType
 from hify.modules.tools.contracts.dto import ToolExecutionRequest, ToolExecutionResult
 from hify.modules.tools.contracts.errors import ToolExecutionHttpError
-from hify.modules.usage.contracts.dto import UsageRecordInfo
-from hify.modules.usage.contracts.errors import UsageContractError
+from hify.modules.usage.contracts.dto import UsageQuotaStatusInfo, UsageRecordInfo
+from hify.modules.usage.contracts.errors import UsageContractError, UsageQuotaExceededError
 from hify.shared.domain.clock import Clock
 
 
@@ -165,6 +165,31 @@ class RecordingUsageRecorder:
             idempotency_key=idempotency_key,
             occurred_at=occurred_at,
             created_at=datetime(2026, 6, 22, tzinfo=UTC),
+        )
+
+
+class RecordingUsageQuotaChecker:
+    def __init__(self, error: UsageQuotaExceededError | None = None) -> None:
+        self.error = error
+        self.requests: list[tuple[UUID, datetime]] = []
+
+    async def ensure_team_quota_available(
+        self,
+        *,
+        team_id: UUID,
+        at: datetime,
+    ) -> UsageQuotaStatusInfo:
+        self.requests.append((team_id, at))
+        if self.error is not None:
+            raise self.error
+        return UsageQuotaStatusInfo(
+            team_id=team_id,
+            monthly_token_limit=None,
+            used_tokens=0,
+            remaining_tokens=None,
+            is_exceeded=False,
+            period_start=datetime(2026, 6, 1, tzinfo=UTC),
+            period_end=datetime(2026, 7, 1, tzinfo=UTC),
         )
 
 
@@ -524,10 +549,12 @@ async def test_create_run_uses_conversation_and_latest_agent_version() -> None:
     unit_of_work = FakeRunsUnitOfWork()
     actor = actor_with_run_permissions()
     conversation = conversation_for_actor(actor)
+    quota_checker = RecordingUsageQuotaChecker()
     handler = CreateRunHandler(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        quota_checker,
         FixedClock(),
     )
 
@@ -543,6 +570,7 @@ async def test_create_run_uses_conversation_and_latest_agent_version() -> None:
     assert run.agent_id == conversation.agent_id
     assert run.agent_version_id == UUID("00000000-0000-7000-8000-000000000006")
     assert run.event_count == 1
+    assert quota_checker.requests == [(actor.team_id, FixedClock().now())]
     assert unit_of_work.committed
 
 
@@ -556,6 +584,7 @@ async def test_create_run_records_workflow_version_payload_when_bound() -> None:
         lambda: unit_of_work,
         FakeConversationReader(conversation),
         FakeAgentCatalog(agent_version),
+        RecordingUsageQuotaChecker(),
         FixedClock(),
     )
 
@@ -579,10 +608,12 @@ async def test_create_run_is_idempotent() -> None:
     unit_of_work = FakeRunsUnitOfWork()
     actor = actor_with_run_permissions()
     conversation = conversation_for_actor(actor)
+    quota_checker = RecordingUsageQuotaChecker()
     handler = CreateRunHandler(
         lambda: unit_of_work,
         FakeConversationReader(conversation),
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        quota_checker,
         FixedClock(),
     )
     command = CreateRunCommand(
@@ -597,6 +628,36 @@ async def test_create_run_is_idempotent() -> None:
     assert first == second
     assert len(unit_of_work.runs.items) == 1
     assert len(unit_of_work.events.items) == 1
+    assert len(quota_checker.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_run_rejects_when_team_quota_exceeded() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    quota_checker = RecordingUsageQuotaChecker(
+        UsageQuotaExceededError("team monthly token quota has been exceeded")
+    )
+    handler = CreateRunHandler(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation),
+        FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        quota_checker,
+        FixedClock(),
+    )
+
+    with pytest.raises(UsageQuotaExceededError):
+        await handler.handle(
+            CreateRunCommand(
+                actor=actor,
+                conversation_id=conversation.id,
+                idempotency_key="run-1",
+            )
+        )
+
+    assert quota_checker.requests == [(actor.team_id, FixedClock().now())]
+    assert unit_of_work.runs.items == {}
 
 
 @pytest.mark.asyncio
@@ -614,6 +675,7 @@ async def test_create_run_requires_execute_permission() -> None:
         lambda: unit_of_work,
         FakeConversationReader(conversation),
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        RecordingUsageQuotaChecker(),
         FixedClock(),
     )
 
@@ -1240,6 +1302,7 @@ async def _create_run(unit_of_work: FakeRunsUnitOfWork, actor: ActorContext) -> 
         lambda: unit_of_work,
         FakeConversationReader(conversation),
         FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        RecordingUsageQuotaChecker(),
         FixedClock(),
     ).handle(
         CreateRunCommand(

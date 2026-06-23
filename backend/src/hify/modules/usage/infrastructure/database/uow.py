@@ -6,11 +6,15 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hify.modules.usage.application.ports import UsageUnitOfWork
-from hify.modules.usage.infrastructure.database.repositories import SqlAlchemyUsageRecordRepository
+from hify.modules.usage.infrastructure.database.repositories import (
+    SqlAlchemyUsageQuotaRepository,
+    SqlAlchemyUsageRecordRepository,
+)
 
 
 class SqlAlchemyUsageUnitOfWork(UsageUnitOfWork):
     records: SqlAlchemyUsageRecordRepository
+    quotas: SqlAlchemyUsageQuotaRepository
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
@@ -19,6 +23,7 @@ class SqlAlchemyUsageUnitOfWork(UsageUnitOfWork):
     async def __aenter__(self) -> Self:
         self._session = self._session_factory()
         self.records = SqlAlchemyUsageRecordRepository(self._session)
+        self.quotas = SqlAlchemyUsageQuotaRepository(self._session)
         return self
 
     async def __aexit__(

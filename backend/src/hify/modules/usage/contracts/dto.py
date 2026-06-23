@@ -34,3 +34,26 @@ class UsageSummaryInfo:
     output_tokens: int
     total_tokens: int
     cost_amount: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class UsageQuotaInfo:
+    id: UUID
+    team_id: UUID
+    monthly_token_limit: int | None
+    version: int
+    created_by: UUID
+    updated_by: UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class UsageQuotaStatusInfo:
+    team_id: UUID
+    monthly_token_limit: int | None
+    used_tokens: int
+    remaining_tokens: int | None
+    is_exceeded: bool
+    period_start: datetime
+    period_end: datetime

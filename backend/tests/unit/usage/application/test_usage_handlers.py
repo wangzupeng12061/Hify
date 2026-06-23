@@ -13,6 +13,15 @@ from hify.modules.usage.application.commands.record_model_usage import (
     RecordModelUsageCommand,
     RecordModelUsageHandler,
 )
+from hify.modules.usage.application.commands.set_team_usage_quota import (
+    SetTeamUsageQuotaCommand,
+    SetTeamUsageQuotaHandler,
+)
+from hify.modules.usage.application.quota_checker import UsageQuotaCheckerService
+from hify.modules.usage.application.queries.get_team_usage_quota_status import (
+    GetTeamUsageQuotaStatusHandler,
+    GetTeamUsageQuotaStatusQuery,
+)
 from hify.modules.usage.application.queries.get_run_usage_summary import (
     GetRunUsageSummaryHandler,
     GetRunUsageSummaryQuery,
@@ -21,7 +30,8 @@ from hify.modules.usage.application.queries.get_team_usage_summary import (
     GetTeamUsageSummaryHandler,
     GetTeamUsageSummaryQuery,
 )
-from hify.modules.usage.domain.entities import UsageRecord
+from hify.modules.usage.contracts.errors import UsageQuotaExceededError
+from hify.modules.usage.domain.entities import UsageQuota, UsageRecord
 from hify.modules.usage.domain.errors import UsagePermissionDeniedError
 from hify.shared.domain.clock import Clock
 
@@ -71,10 +81,43 @@ class FakeUsageRecordRepository:
         ]
         return _summarize(records)
 
+    async def summarize_for_team_period(
+        self,
+        *,
+        team_id: UUID,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> tuple[int, int, int, str]:
+        records = [
+            record
+            for record in self.items.values()
+            if record.team_id == team_id
+            and period_start <= record.occurred_at < period_end
+        ]
+        return _summarize(records)
+
+
+class FakeUsageQuotaRepository:
+    def __init__(self) -> None:
+        self.items: dict[UUID, UsageQuota] = {}
+
+    async def add(self, quota: UsageQuota) -> None:
+        self.items[quota.id] = quota
+
+    async def save(self, quota: UsageQuota) -> None:
+        self.items[quota.id] = quota
+
+    async def get_by_team(self, *, team_id: UUID) -> UsageQuota | None:
+        for quota in self.items.values():
+            if quota.team_id == team_id:
+                return quota
+        return None
+
 
 class FakeUsageUnitOfWork:
     def __init__(self) -> None:
         self.records = FakeUsageRecordRepository()
+        self.quotas = FakeUsageQuotaRepository()
         self.committed = False
         self.rolled_back = False
 
@@ -104,6 +147,16 @@ def actor_with_usage_read() -> ActorContext:
         membership_id=MEMBERSHIP_ID,
         role="admin",
         permissions=("usage.read",),
+    )
+
+
+def actor_with_usage_manage() -> ActorContext:
+    return ActorContext(
+        user_id=USER_ID,
+        team_id=TEAM_ID,
+        membership_id=MEMBERSHIP_ID,
+        role="admin",
+        permissions=("usage.read", "usage.manage"),
     )
 
 
@@ -162,6 +215,78 @@ async def test_usage_summary_requires_usage_read_permission() -> None:
         await GetTeamUsageSummaryHandler(lambda: FakeUsageUnitOfWork()).handle(
             GetTeamUsageSummaryQuery(actor=actor)
         )
+
+
+@pytest.mark.asyncio
+async def test_set_team_usage_quota_creates_and_updates_quota() -> None:
+    unit_of_work = FakeUsageUnitOfWork()
+    actor = actor_with_usage_manage()
+    handler = SetTeamUsageQuotaHandler(lambda: unit_of_work, FixedClock())
+
+    created = await handler.handle(
+        SetTeamUsageQuotaCommand(actor=actor, monthly_token_limit=100)
+    )
+    updated = await handler.handle(
+        SetTeamUsageQuotaCommand(actor=actor, monthly_token_limit=200)
+    )
+
+    assert created.id == updated.id
+    assert updated.monthly_token_limit == 200
+    assert updated.version == 1
+    assert len(unit_of_work.quotas.items) == 1
+    assert unit_of_work.committed
+
+
+@pytest.mark.asyncio
+async def test_quota_status_uses_current_month_usage() -> None:
+    unit_of_work = FakeUsageUnitOfWork()
+    actor = actor_with_usage_manage()
+    await SetTeamUsageQuotaHandler(lambda: unit_of_work, FixedClock()).handle(
+        SetTeamUsageQuotaCommand(actor=actor, monthly_token_limit=100)
+    )
+    await RecordModelUsageHandler(lambda: unit_of_work, FixedClock()).handle(
+        _record_command(input_tokens=30, output_tokens=40, idempotency_key="usage-1")
+    )
+
+    status_info = await GetTeamUsageQuotaStatusHandler(lambda: unit_of_work, FixedClock()).handle(
+        GetTeamUsageQuotaStatusQuery(actor=actor)
+    )
+
+    assert status_info.monthly_token_limit == 100
+    assert status_info.used_tokens == 70
+    assert status_info.remaining_tokens == 30
+    assert not status_info.is_exceeded
+    assert status_info.period_start == datetime(2026, 6, 1, tzinfo=UTC)
+    assert status_info.period_end == datetime(2026, 7, 1, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_quota_checker_rejects_when_monthly_limit_is_exceeded() -> None:
+    unit_of_work = FakeUsageUnitOfWork()
+    actor = actor_with_usage_manage()
+    await SetTeamUsageQuotaHandler(lambda: unit_of_work, FixedClock()).handle(
+        SetTeamUsageQuotaCommand(actor=actor, monthly_token_limit=70)
+    )
+    await RecordModelUsageHandler(lambda: unit_of_work, FixedClock()).handle(
+        _record_command(input_tokens=30, output_tokens=40, idempotency_key="usage-1")
+    )
+
+    with pytest.raises(UsageQuotaExceededError):
+        await UsageQuotaCheckerService(lambda: unit_of_work).ensure_team_quota_available(
+            team_id=TEAM_ID,
+            at=NOW,
+        )
+
+
+@pytest.mark.asyncio
+async def test_quota_checker_allows_when_quota_is_not_configured() -> None:
+    status_info = await UsageQuotaCheckerService(
+        lambda: FakeUsageUnitOfWork()
+    ).ensure_team_quota_available(team_id=TEAM_ID, at=NOW)
+
+    assert status_info.monthly_token_limit is None
+    assert status_info.remaining_tokens is None
+    assert not status_info.is_exceeded
 
 
 def _record_command(
