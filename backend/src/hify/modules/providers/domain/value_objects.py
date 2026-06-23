@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 
 from hify.modules.providers.domain.errors import ProviderValidationError
+
+PRICE_QUANTUM = Decimal("0.00000001")
 
 
 class ProviderType(StrEnum):
@@ -100,3 +103,11 @@ def parse_model_kind(value: str) -> ModelKind:
         return ModelKind(value)
     except ValueError as exc:
         raise ProviderValidationError("model kind is invalid") from exc
+
+
+def validate_model_price(value: Decimal | None, field_name: str) -> Decimal | None:
+    if value is None:
+        return None
+    if value < Decimal("0"):
+        raise ProviderValidationError(f"{field_name} must be non-negative")
+    return value.quantize(PRICE_QUANTUM)

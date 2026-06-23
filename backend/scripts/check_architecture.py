@@ -52,7 +52,7 @@ ALLOWED_SYNC_DEPENDENCIES = {
         "tools",
         "usage",
     },
-    "usage": {"identity"},
+    "usage": {"identity", "providers"},
 }
 
 FRAMEWORK_AND_SDK_IMPORTS = {

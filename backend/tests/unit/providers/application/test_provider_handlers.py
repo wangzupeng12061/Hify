@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from types import TracebackType
 from typing import Self
 from uuid import UUID
@@ -16,10 +17,16 @@ from hify.modules.providers.application.commands.create_provider import (
     CreateProviderCommand,
     CreateProviderHandler,
 )
+from hify.modules.providers.application.commands.set_provider_model_pricing import (
+    SetProviderModelPricingCommand,
+    SetProviderModelPricingHandler,
+)
 from hify.modules.providers.application.queries.get_model import (
+    GetModelPricingHandler,
     GetModelHandler,
     ListModelsHandler,
     ModelCatalogService,
+    ModelPricingCatalogService,
 )
 from hify.modules.providers.domain.entities import ModelProvider, ProviderCredential, ProviderModel
 from hify.modules.providers.domain.errors import (
@@ -98,6 +105,9 @@ class FakeModelRepository:
         self.items: dict[UUID, ProviderModel] = {}
 
     async def add(self, model: ProviderModel) -> None:
+        self.items[model.id] = model
+
+    async def save(self, model: ProviderModel) -> None:
         self.items[model.id] = model
 
     async def get_by_id(self, model_id: UUID) -> ProviderModel | None:
@@ -237,7 +247,112 @@ async def test_add_provider_model_and_catalog_queries() -> None:
     fetched = await catalog.get_model(team_id=actor.team_id, model_id=model.id)
     listed = await catalog.list_models(team_id=actor.team_id)
     assert fetched.model_name == "gpt-4.1"
+    assert fetched.price_per_1m_input_tokens is None
+    assert fetched.price_per_1m_output_tokens is None
     assert listed == (fetched,)
+
+
+@pytest.mark.asyncio
+async def test_set_provider_model_pricing_updates_catalog_pricing() -> None:
+    unit_of_work = FakeProvidersUnitOfWork()
+    actor = actor_with_provider_permission()
+    provider = await CreateProviderHandler(
+        lambda: unit_of_work,
+        FakeCredentialEncryptor(),
+        FixedClock(),
+    ).handle(
+        CreateProviderCommand(
+            actor=actor,
+            provider_type="openai",
+            name="OpenAI",
+            base_url=None,
+            credential_plaintext="secret",
+        )
+    )
+    model = await AddProviderModelHandler(lambda: unit_of_work, FixedClock()).handle(
+        AddProviderModelCommand(
+            actor=actor,
+            provider_id=provider.id,
+            model_name="gpt-4.1",
+            display_name="GPT 4.1",
+            kind="chat",
+            context_window_tokens=128000,
+            supports_tools=True,
+            supports_vision=True,
+            supports_structured_output=True,
+        )
+    )
+
+    updated = await SetProviderModelPricingHandler(lambda: unit_of_work, FixedClock()).handle(
+        SetProviderModelPricingCommand(
+            actor=actor,
+            model_id=model.id,
+            price_per_1m_input_tokens=Decimal("2.000000001"),
+            price_per_1m_output_tokens=Decimal("8.123456789"),
+        )
+    )
+    pricing_catalog = ModelPricingCatalogService(GetModelPricingHandler(lambda: unit_of_work))
+    pricing = await pricing_catalog.get_model_pricing(team_id=actor.team_id, model_id=model.id)
+
+    assert updated.price_per_1m_input_tokens == Decimal("2.00000000")
+    assert updated.price_per_1m_output_tokens == Decimal("8.12345679")
+    assert pricing is not None
+    assert pricing.price_per_1m_input_tokens == Decimal("2.00000000")
+    assert pricing.price_per_1m_output_tokens == Decimal("8.12345679")
+    assert unit_of_work.committed
+
+
+@pytest.mark.asyncio
+async def test_set_provider_model_pricing_allows_clearing_prices() -> None:
+    unit_of_work = FakeProvidersUnitOfWork()
+    actor = actor_with_provider_permission()
+    provider = await CreateProviderHandler(
+        lambda: unit_of_work,
+        FakeCredentialEncryptor(),
+        FixedClock(),
+    ).handle(
+        CreateProviderCommand(
+            actor=actor,
+            provider_type="openai",
+            name="OpenAI",
+            base_url=None,
+            credential_plaintext="secret",
+        )
+    )
+    model = await AddProviderModelHandler(lambda: unit_of_work, FixedClock()).handle(
+        AddProviderModelCommand(
+            actor=actor,
+            provider_id=provider.id,
+            model_name="gpt-4.1",
+            display_name="GPT 4.1",
+            kind="chat",
+            context_window_tokens=128000,
+            supports_tools=True,
+            supports_vision=True,
+            supports_structured_output=True,
+        )
+    )
+    handler = SetProviderModelPricingHandler(lambda: unit_of_work, FixedClock())
+    await handler.handle(
+        SetProviderModelPricingCommand(
+            actor=actor,
+            model_id=model.id,
+            price_per_1m_input_tokens=Decimal("2"),
+            price_per_1m_output_tokens=Decimal("8"),
+        )
+    )
+
+    cleared = await handler.handle(
+        SetProviderModelPricingCommand(
+            actor=actor,
+            model_id=model.id,
+            price_per_1m_input_tokens=None,
+            price_per_1m_output_tokens=None,
+        )
+    )
+
+    assert cleared.price_per_1m_input_tokens is None
+    assert cleared.price_per_1m_output_tokens is None
 
 
 @pytest.mark.asyncio

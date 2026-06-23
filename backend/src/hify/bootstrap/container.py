@@ -77,7 +77,10 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         session_factory,
         agent_catalog=agents.agent_catalog,
     )
-    usage = create_usage_module(session_factory)
+    usage = create_usage_module(
+        session_factory,
+        model_pricing_catalog=providers.model_pricing_catalog,
+    )
     runs = create_runs_module(
         session_factory,
         conversation_reader=conversations.conversation_reader,

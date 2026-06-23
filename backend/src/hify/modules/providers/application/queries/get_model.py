@@ -5,8 +5,8 @@ from uuid import UUID
 
 from hify.modules.providers.application.dto import model_info_from_domain
 from hify.modules.providers.application.ports import ProvidersUnitOfWorkFactory
-from hify.modules.providers.contracts.dto import ModelInfo
-from hify.modules.providers.contracts.services import ModelCatalog
+from hify.modules.providers.contracts.dto import ModelInfo, ModelPricingInfo
+from hify.modules.providers.contracts.services import ModelCatalog, ModelPricingCatalog
 from hify.modules.providers.domain.errors import ProviderModelNotFoundError
 
 
@@ -49,6 +49,30 @@ class ListModelsHandler:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class GetModelPricingQuery:
+    team_id: UUID
+    model_id: UUID
+
+
+class GetModelPricingHandler:
+    def __init__(self, unit_of_work_factory: ProvidersUnitOfWorkFactory) -> None:
+        self._unit_of_work_factory = unit_of_work_factory
+
+    async def handle(self, query: GetModelPricingQuery) -> ModelPricingInfo | None:
+        async with self._unit_of_work_factory() as unit_of_work:
+            model = await unit_of_work.models.get_by_id(query.model_id)
+            if model is None or model.team_id != query.team_id:
+                return None
+
+        return ModelPricingInfo(
+            provider_model_id=model.id,
+            team_id=model.team_id,
+            price_per_1m_input_tokens=model.price_per_1m_input_tokens,
+            price_per_1m_output_tokens=model.price_per_1m_output_tokens,
+        )
+
+
 class ModelCatalogService(ModelCatalog):
     def __init__(
         self,
@@ -63,3 +87,18 @@ class ModelCatalogService(ModelCatalog):
 
     async def list_models(self, *, team_id: UUID) -> tuple[ModelInfo, ...]:
         return await self._list_models_handler.handle(team_id=team_id)
+
+
+class ModelPricingCatalogService(ModelPricingCatalog):
+    def __init__(self, get_model_pricing_handler: GetModelPricingHandler) -> None:
+        self._get_model_pricing_handler = get_model_pricing_handler
+
+    async def get_model_pricing(
+        self,
+        *,
+        team_id: UUID,
+        model_id: UUID,
+    ) -> ModelPricingInfo | None:
+        return await self._get_model_pricing_handler.handle(
+            GetModelPricingQuery(team_id=team_id, model_id=model_id)
+        )

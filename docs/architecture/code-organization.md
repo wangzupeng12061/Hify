@@ -94,7 +94,7 @@ backend/
 | `agents` | `identity`、`providers`、`knowledge`、`workflows`、`tools` |
 | `conversations` | `identity`、`agents` |
 | `runs` | `identity`、`agents`、`conversations`、`providers`、`knowledge`、`workflows`、`tools`、`usage` |
-| `usage` | `identity`；`runs` 只允许通过 `usage.contracts` 幂等写入模型用量 |
+| `usage` | `identity`、`providers`；`runs` 只允许通过 `usage.contracts` 幂等写入模型用量 |
 
 `hify.processes` 可以调用多个模块 Contracts，但不拥有模块数据表。事件消费者可以导入发布方的事件 Contract；禁止在处理事件时同步回调发布方形成逻辑环。
 

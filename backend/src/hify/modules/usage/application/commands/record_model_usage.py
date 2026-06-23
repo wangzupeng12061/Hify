@@ -5,12 +5,16 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
+from hify.modules.providers.contracts.services import ModelPricingCatalog
 from hify.modules.usage.application.dto import usage_record_info_from_domain
 from hify.modules.usage.application.ports import UsageUnitOfWorkFactory
 from hify.modules.usage.contracts.dto import UsageRecordInfo
 from hify.modules.usage.contracts.services import UsageRecorder
 from hify.modules.usage.domain.entities import UsageRecord
 from hify.shared.domain.clock import Clock
+
+PRICE_QUANTUM = Decimal("0.00000001")
+TOKENS_PER_MILLION = Decimal("1000000")
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,11 +35,27 @@ class RecordModelUsageCommand:
 
 
 class RecordModelUsageHandler:
-    def __init__(self, unit_of_work_factory: UsageUnitOfWorkFactory, clock: Clock) -> None:
+    def __init__(
+        self,
+        unit_of_work_factory: UsageUnitOfWorkFactory,
+        clock: Clock,
+        model_pricing_catalog: ModelPricingCatalog | None = None,
+    ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._clock = clock
+        self._model_pricing_catalog = model_pricing_catalog
 
     async def handle(self, command: RecordModelUsageCommand) -> UsageRecordInfo:
+        async with self._unit_of_work_factory() as unit_of_work:
+            existing_record = await unit_of_work.records.get_by_idempotency_key(
+                team_id=command.team_id,
+                idempotency_key=command.idempotency_key,
+            )
+            if existing_record is not None:
+                return usage_record_info_from_domain(existing_record)
+
+        cost_amount = await self._estimate_cost(command)
+
         async with self._unit_of_work_factory() as unit_of_work:
             existing_record = await unit_of_work.records.get_by_idempotency_key(
                 team_id=command.team_id,
@@ -55,7 +75,7 @@ class RecordModelUsageHandler:
                 model=command.model,
                 input_tokens=command.input_tokens,
                 output_tokens=command.output_tokens,
-                cost_amount=command.cost_amount,
+                cost_amount=cost_amount,
                 idempotency_key=command.idempotency_key,
                 occurred_at=command.occurred_at,
                 now=self._clock.now(),
@@ -64,6 +84,23 @@ class RecordModelUsageHandler:
             await unit_of_work.commit()
 
         return usage_record_info_from_domain(record)
+
+    async def _estimate_cost(self, command: RecordModelUsageCommand) -> Decimal:
+        if self._model_pricing_catalog is None:
+            return Decimal("0").quantize(PRICE_QUANTUM)
+
+        pricing = await self._model_pricing_catalog.get_model_pricing(
+            team_id=command.team_id,
+            model_id=command.provider_model_id,
+        )
+        if pricing is None:
+            return Decimal("0").quantize(PRICE_QUANTUM)
+
+        input_price = pricing.price_per_1m_input_tokens or Decimal("0")
+        output_price = pricing.price_per_1m_output_tokens or Decimal("0")
+        input_cost = Decimal(command.input_tokens) * input_price / TOKENS_PER_MILLION
+        output_cost = Decimal(command.output_tokens) * output_price / TOKENS_PER_MILLION
+        return (input_cost + output_cost).quantize(PRICE_QUANTUM)
 
 
 class UsageRecorderService(UsageRecorder):

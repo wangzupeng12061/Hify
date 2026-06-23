@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from hify.modules.providers.contracts.services import ModelPricingCatalog
 from hify.modules.usage.api.dependencies import AuthenticationNotConfiguredAuthenticator
 from hify.modules.usage.api.router import create_usage_router
 from hify.modules.usage.application.commands.record_model_usage import (
@@ -35,6 +36,7 @@ class UsageModule:
 def create_usage_module(
     session_factory: async_sessionmaker[AsyncSession],
     *,
+    model_pricing_catalog: ModelPricingCatalog | None = None,
     clock: Clock | None = None,
 ) -> UsageModule:
     module_clock = clock or SystemClock()
@@ -42,7 +44,11 @@ def create_usage_module(
     def unit_of_work_factory() -> SqlAlchemyUsageUnitOfWork:
         return SqlAlchemyUsageUnitOfWork(session_factory)
 
-    record_model_usage_handler = RecordModelUsageHandler(unit_of_work_factory, module_clock)
+    record_model_usage_handler = RecordModelUsageHandler(
+        unit_of_work_factory,
+        module_clock,
+        model_pricing_catalog,
+    )
     set_quota_handler = SetTeamUsageQuotaHandler(unit_of_work_factory, module_clock)
     get_team_summary_handler = GetTeamUsageSummaryHandler(unit_of_work_factory)
     get_run_summary_handler = GetRunUsageSummaryHandler(unit_of_work_factory)

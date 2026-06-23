@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -31,6 +32,11 @@ class AddProviderModelRequest(BaseModel):
     supports_structured_output: bool = False
 
 
+class SetProviderModelPricingRequest(BaseModel):
+    price_per_1m_input_tokens: Decimal | None = Field(default=None, ge=0)
+    price_per_1m_output_tokens: Decimal | None = Field(default=None, ge=0)
+
+
 class ModelResponse(BaseModel):
     id: UUID
     team_id: UUID
@@ -45,3 +51,5 @@ class ModelResponse(BaseModel):
     supports_tools: bool
     supports_vision: bool
     supports_structured_output: bool
+    price_per_1m_input_tokens: Decimal | None
+    price_per_1m_output_tokens: Decimal | None

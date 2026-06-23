@@ -167,6 +167,8 @@ def active_chat_model(team_id: UUID) -> ModelInfo:
         supports_tools=True,
         supports_vision=True,
         supports_structured_output=True,
+        price_per_1m_input_tokens=None,
+        price_per_1m_output_tokens=None,
     )
 
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Numeric
 from sqlalchemy import LargeBinary, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -138,6 +139,14 @@ class ProviderModelModel(Base):
             "context_window_tokens > 0",
             name="ck_providers_models__context_window_tokens_positive",
         ),
+        CheckConstraint(
+            "price_per_1m_input_tokens IS NULL OR price_per_1m_input_tokens >= 0",
+            name="ck_providers_models__input_price_non_negative",
+        ),
+        CheckConstraint(
+            "price_per_1m_output_tokens IS NULL OR price_per_1m_output_tokens >= 0",
+            name="ck_providers_models__output_price_non_negative",
+        ),
         Index(
             "uq_providers_models__provider_model_name_lower",
             "provider_id",
@@ -168,6 +177,14 @@ class ProviderModelModel(Base):
     supports_tools: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     supports_vision: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     supports_structured_output: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    price_per_1m_input_tokens: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 8),
+        nullable=True,
+    )
+    price_per_1m_output_tokens: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 8),
+        nullable=True,
+    )
     version: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,
