@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from fastapi import Request
+from fastapi import HTTPException, Request, status
 
 from hify.modules.identity.contracts.dto import ActorContext
-from hify.shared.domain.errors import PermissionDeniedError
 
 
 class RequestAuthenticator(Protocol):
@@ -15,4 +14,10 @@ class RequestAuthenticator(Protocol):
 class AuthenticationNotConfiguredAuthenticator:
     async def authenticate(self, request: Request) -> ActorContext:
         _ = request
-        raise PermissionDeniedError("request authentication is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "AUTHENTICATION_NOT_CONFIGURED",
+                "message": "authentication is not configured for this API",
+            },
+        )

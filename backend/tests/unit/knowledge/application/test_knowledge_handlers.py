@@ -17,6 +17,10 @@ from hify.modules.knowledge.application.commands.ingest_document import (
     IngestDocumentHandler,
 )
 from hify.modules.knowledge.application.queries.retrieve_chunks import KnowledgeRetrieverService
+from hify.modules.knowledge.application.queries.list_documents import (
+    ListKnowledgeDocumentsForActorHandler,
+    ListKnowledgeDocumentsForActorQuery,
+)
 from hify.modules.knowledge.domain.entities import KnowledgeBase, KnowledgeChunk, KnowledgeDocument
 from hify.modules.knowledge.domain.errors import (
     KnowledgeBaseAlreadyExistsError,
@@ -306,6 +310,47 @@ async def test_ingest_document_splits_embeds_and_persists_chunks() -> None:
     updated_knowledge_base = unit_of_work.knowledge_bases.items[knowledge_base.id]
     assert updated_knowledge_base.document_count == 1
     assert updated_knowledge_base.chunk_count == 2
+
+
+@pytest.mark.asyncio
+async def test_list_documents_returns_documents_for_actor_team() -> None:
+    unit_of_work = FakeKnowledgeUnitOfWork()
+    actor = actor_with_knowledge_permission()
+    knowledge_base = await CreateKnowledgeBaseHandler(
+        lambda: unit_of_work,
+        FakeModelCatalog(),
+        FixedClock(),
+    ).handle(
+        CreateKnowledgeBaseCommand(
+            actor=actor,
+            name="Team Docs",
+            description=None,
+            embedding_model_id=UUID("00000000-0000-7000-8000-000000000010"),
+        )
+    )
+    await IngestDocumentHandler(
+        lambda: unit_of_work, RecordingEmbeddingGateway(), FixedClock()
+    ).handle(
+        IngestDocumentCommand(
+            actor=actor,
+            knowledge_base_id=knowledge_base.id,
+            title="Runbook",
+            source_uri=None,
+            content="How to restart the API",
+        )
+    )
+    handler = ListKnowledgeDocumentsForActorHandler(lambda: unit_of_work)
+
+    documents = await handler.handle(
+        ListKnowledgeDocumentsForActorQuery(
+            actor=actor,
+            knowledge_base_id=knowledge_base.id,
+        )
+    )
+
+    assert len(documents) == 1
+    assert documents[0].title == "Runbook"
+    assert documents[0].knowledge_base_id == knowledge_base.id
 
 
 @pytest.mark.asyncio
