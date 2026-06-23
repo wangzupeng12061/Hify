@@ -11,6 +11,7 @@ import type {
   ExecuteRunStreamInput,
   ListRunEventsInput,
   Run,
+  RunDiagnostics,
   RunEvent,
   RunEventPage,
   RunIdInput,
@@ -27,6 +28,18 @@ export async function createRun(request: CreateRunRequest): Promise<Run> {
 export async function getRun(request: RunIdInput): Promise<Run> {
   return unwrapApiResponse(
     await hifyApiClient.GET("/runs/{run_id}", {
+      params: {
+        path: {
+          run_id: request.runId,
+        },
+      },
+    }),
+  );
+}
+
+export async function getRunDiagnostics(request: RunIdInput): Promise<RunDiagnostics> {
+  return unwrapApiResponse(
+    await hifyApiClient.GET("/runs/{run_id}/diagnostics", {
       params: {
         path: {
           run_id: request.runId,

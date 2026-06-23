@@ -3,8 +3,8 @@ import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useCancelRun, useCreateRun, useRun, useRunEvents } from "@/features/runs";
-import type { Run, RunEvent } from "@/features/runs";
+import { useCancelRun, useCreateRun, useRun, useRunDiagnostics, useRunEvents } from "@/features/runs";
+import type { Run, RunDiagnostics, RunEvent } from "@/features/runs";
 import { hifyApiClient } from "@/lib/api/client";
 import { createHifyQueryClient } from "@/lib/query/query-client";
 
@@ -102,6 +102,28 @@ describe("run hooks", () => {
     });
   });
 
+  it("gets run diagnostics with path params", async () => {
+    apiClientMock.GET.mockResolvedValueOnce({
+      data: createRunDiagnosticsResponse(),
+      response: new Response(null, { status: 200 }),
+    });
+
+    const { result } = renderHook(() => useRunDiagnostics({ runId: "run-1" }), {
+      wrapper: createQueryWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(hifyApiClient.GET).toHaveBeenCalledWith("/runs/{run_id}/diagnostics", {
+      params: {
+        path: {
+          run_id: "run-1",
+        },
+      },
+    });
+    expect(result.current.data?.steps[0]?.name).toBe("Workflow LLM node");
+  });
+
   it("cancels runs with path params", async () => {
     apiClientMock.POST.mockResolvedValueOnce({
       data: createRunResponse({ status: "cancelled" }),
@@ -165,6 +187,46 @@ function createRunEventResponse(override: Partial<RunEvent> = {}): RunEvent {
     run_id: "run-1",
     sequence_number: 1,
     team_id: "team-1",
+    ...override,
+  };
+}
+
+function createRunDiagnosticsResponse(
+  override: Partial<RunDiagnostics> = {},
+): RunDiagnostics {
+  return {
+    agent_id: "agent-1",
+    agent_version_id: "agent-version-1",
+    completed_at: null,
+    conversation_id: "conversation-1",
+    created_at: "2026-06-23T00:00:00Z",
+    duration_ms: null,
+    error_code: null,
+    error_message: null,
+    event_count: 2,
+    id: "run-1",
+    started_at: "2026-06-23T00:00:00Z",
+    status: "running",
+    step_count: 1,
+    steps: [
+      {
+        completed_at: "2026-06-23T00:00:01Z",
+        duration_ms: 1000,
+        error_code: null,
+        error_message: null,
+        id: "step-1",
+        name: "Workflow LLM node",
+        sequence_number: 1,
+        started_at: "2026-06-23T00:00:00Z",
+        status: "succeeded",
+        step_type: "llm_call",
+      },
+    ],
+    team_id: "team-1",
+    usage_cost_amount: "0",
+    usage_input_tokens: 0,
+    usage_output_tokens: 0,
+    usage_total_tokens: 0,
     ...override,
   };
 }
