@@ -1,13 +1,6 @@
 import type { ReactNode } from "react";
 
-const NAVIGATION_ITEMS = [
-  "Identity",
-  "Providers",
-  "Agents",
-  "Runs",
-  "Knowledge",
-  "Usage",
-];
+import { AppNavigation } from "./app-navigation";
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
@@ -20,18 +13,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span>AI Agent Platform</span>
           </div>
         </div>
-        <nav className="app-shell__nav">
-          {NAVIGATION_ITEMS.map((item) => (
-            <a
-              aria-current={item === "Identity" ? "page" : undefined}
-              className="app-shell__nav-link"
-              href={item === "Identity" ? "/" : "#"}
-              key={item}
-            >
-              {item}
-            </a>
-          ))}
-        </nav>
+        <AppNavigation />
       </aside>
       <div className="app-shell__main">
         <header className="app-shell__header">
