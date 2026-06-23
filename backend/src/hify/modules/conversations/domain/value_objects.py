@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
+from uuid import UUID
 
 from hify.modules.conversations.domain.errors import ConversationValidationError
 
@@ -77,3 +79,24 @@ def parse_message_cursor(value: str | None) -> int | None:
     if cursor < 0:
         raise ConversationValidationError("message cursor is invalid")
     return cursor
+
+
+def format_conversation_cursor(created_at: datetime, conversation_id: UUID) -> str:
+    return f"{created_at.isoformat()}|{conversation_id}"
+
+
+def parse_conversation_cursor(value: str | None) -> tuple[datetime, UUID] | None:
+    if value is None:
+        return None
+
+    created_at_value, separator, conversation_id_value = value.partition("|")
+    if separator != "|":
+        raise ConversationValidationError("conversation cursor is invalid")
+
+    try:
+        created_at = datetime.fromisoformat(created_at_value)
+        conversation_id = UUID(conversation_id_value)
+    except ValueError as exc:
+        raise ConversationValidationError("conversation cursor is invalid") from exc
+
+    return created_at, conversation_id

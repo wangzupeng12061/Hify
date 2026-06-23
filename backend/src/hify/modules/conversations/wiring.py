@@ -22,12 +22,17 @@ from hify.modules.conversations.application.commands.submit_message_feedback imp
     SubmitMessageFeedbackHandler,
 )
 from hify.modules.conversations.application.queries.get_conversation import (
+    GetConversationForActorHandler,
     GetConversationHandler,
 )
 from hify.modules.conversations.application.queries.list_conversation_messages import (
     ConversationReaderService,
     ListConversationMessagesForActorHandler,
     ListConversationMessagesHandler,
+)
+from hify.modules.conversations.application.queries.list_conversations import (
+    ListConversationsForActorHandler,
+    ListConversationsHandler,
 )
 from hify.modules.conversations.contracts.services import ConversationReader, ConversationWriter
 from hify.modules.conversations.infrastructure.database.uow import SqlAlchemyConversationsUnitOfWork
@@ -64,6 +69,11 @@ def create_conversations_module(
     )
     submit_feedback_handler = SubmitMessageFeedbackHandler(unit_of_work_factory, module_clock)
     get_conversation_handler = GetConversationHandler(unit_of_work_factory)
+    get_conversation_for_actor_handler = GetConversationForActorHandler(get_conversation_handler)
+    list_conversations_handler = ListConversationsHandler(unit_of_work_factory)
+    list_conversations_for_actor_handler = ListConversationsForActorHandler(
+        list_conversations_handler
+    )
     list_messages_handler = ListConversationMessagesHandler(unit_of_work_factory)
     list_messages_for_actor_handler = ListConversationMessagesForActorHandler(list_messages_handler)
     conversation_reader = ConversationReaderService(
@@ -74,6 +84,8 @@ def create_conversations_module(
     router = create_conversations_router(
         create_conversation_handler=create_conversation_handler,
         append_message_handler=append_message_handler,
+        get_conversation_handler=get_conversation_for_actor_handler,
+        list_conversations_handler=list_conversations_for_actor_handler,
         list_messages_handler=list_messages_for_actor_handler,
         submit_feedback_handler=submit_feedback_handler,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),

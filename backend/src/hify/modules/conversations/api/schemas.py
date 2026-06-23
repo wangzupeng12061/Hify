@@ -55,6 +55,14 @@ class ConversationMessagePageResponse(BaseModel):
     has_more: bool
 
 
+class ConversationPageResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    items: tuple[ConversationResponse, ...]
+    next_cursor: str | None
+    has_more: bool
+
+
 class MessageFeedbackResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

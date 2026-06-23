@@ -7,6 +7,7 @@ const NAVIGATION_ITEMS = [
   { href: "/", label: "Identity" },
   { href: "/providers", label: "Providers" },
   { href: "/agents", label: "Agents" },
+  { href: "/conversations", label: "Conversations" },
   { href: "/runs", label: "Runs" },
   { href: "#", label: "Knowledge" },
   { href: "#", label: "Usage" },
@@ -18,7 +19,9 @@ export function AppNavigation() {
   return (
     <nav className="app-shell__nav">
       {NAVIGATION_ITEMS.map((item) => {
-        const isCurrent = item.href !== "#" && pathname === item.href;
+        const isCurrent =
+          item.href !== "#" &&
+          (pathname === item.href || pathname.startsWith(`${item.href}/`));
 
         return (
           <Link
