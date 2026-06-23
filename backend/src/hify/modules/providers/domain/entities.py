@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from hify.shared.domain.ids import new_uuid
@@ -18,6 +19,7 @@ from hify.modules.providers.domain.value_objects import (
     normalize_display_name,
     normalize_model_name,
     normalize_provider_name,
+    validate_model_price,
 )
 
 
@@ -129,6 +131,8 @@ class ProviderModel:
     supports_tools: bool
     supports_vision: bool
     supports_structured_output: bool
+    price_per_1m_input_tokens: Decimal | None
+    price_per_1m_output_tokens: Decimal | None
     version: int
     created_at: datetime
     updated_at: datetime
@@ -162,10 +166,29 @@ class ProviderModel:
             supports_tools=supports_tools,
             supports_vision=supports_vision,
             supports_structured_output=supports_structured_output,
+            price_per_1m_input_tokens=None,
+            price_per_1m_output_tokens=None,
             version=0,
             created_at=now,
             updated_at=now,
         )
+
+    def set_pricing(
+        self,
+        *,
+        price_per_1m_input_tokens: Decimal | None,
+        price_per_1m_output_tokens: Decimal | None,
+        now: datetime,
+    ) -> None:
+        self.price_per_1m_input_tokens = validate_model_price(
+            price_per_1m_input_tokens,
+            "price_per_1m_input_tokens",
+        )
+        self.price_per_1m_output_tokens = validate_model_price(
+            price_per_1m_output_tokens,
+            "price_per_1m_output_tokens",
+        )
+        self._mark_updated(now)
 
     def disable(self, *, now: datetime) -> None:
         if self.status == ModelStatus.DISABLED:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -46,5 +47,27 @@ def test_create_model_rejects_non_positive_context_window() -> None:
             supports_tools=True,
             supports_vision=False,
             supports_structured_output=True,
+            now=datetime(2026, 6, 22, tzinfo=UTC),
+        )
+
+
+def test_set_model_pricing_rejects_negative_price() -> None:
+    model = ProviderModel.create(
+        team_id=UUID("00000000-0000-7000-8000-000000000001"),
+        provider_id=UUID("00000000-0000-7000-8000-000000000002"),
+        model_name="gpt-4.1",
+        display_name="GPT 4.1",
+        kind=ModelKind.CHAT,
+        context_window_tokens=128000,
+        supports_tools=True,
+        supports_vision=False,
+        supports_structured_output=True,
+        now=datetime(2026, 6, 22, tzinfo=UTC),
+    )
+
+    with pytest.raises(ProviderValidationError, match="non-negative"):
+        model.set_pricing(
+            price_per_1m_input_tokens=Decimal("-0.01"),
+            price_per_1m_output_tokens=Decimal("1.00"),
             now=datetime(2026, 6, 22, tzinfo=UTC),
         )

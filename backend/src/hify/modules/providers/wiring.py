@@ -9,12 +9,22 @@ from hify.modules.providers.api.dependencies import AuthenticationNotConfiguredA
 from hify.modules.providers.api.router import create_providers_router
 from hify.modules.providers.application.commands.add_provider_model import AddProviderModelHandler
 from hify.modules.providers.application.commands.create_provider import CreateProviderHandler
+from hify.modules.providers.application.commands.set_provider_model_pricing import (
+    SetProviderModelPricingHandler,
+)
 from hify.modules.providers.application.queries.get_model import (
+    GetModelPricingHandler,
     GetModelHandler,
     ListModelsHandler,
     ModelCatalogService,
+    ModelPricingCatalogService,
 )
-from hify.modules.providers.contracts.services import EmbeddingGateway, ModelCatalog, ModelGateway
+from hify.modules.providers.contracts.services import (
+    EmbeddingGateway,
+    ModelCatalog,
+    ModelGateway,
+    ModelPricingCatalog,
+)
 from hify.modules.providers.infrastructure.adapters.fake import MissingEmbeddingGateway, MissingModelGateway
 from hify.modules.providers.infrastructure.database.uow import SqlAlchemyProvidersUnitOfWork
 from hify.modules.providers.infrastructure.encryption import (
@@ -28,6 +38,7 @@ from hify.shared.domain.clock import Clock, SystemClock
 class ProvidersModule:
     router: APIRouter
     model_catalog: ModelCatalog
+    model_pricing_catalog: ModelPricingCatalog
     model_gateway: ModelGateway
     embedding_gateway: EmbeddingGateway
 
@@ -55,20 +66,28 @@ def create_providers_module(
         module_clock,
     )
     add_provider_model_handler = AddProviderModelHandler(unit_of_work_factory, module_clock)
+    set_provider_model_pricing_handler = SetProviderModelPricingHandler(
+        unit_of_work_factory,
+        module_clock,
+    )
     get_model_handler = GetModelHandler(unit_of_work_factory)
     list_models_handler = ListModelsHandler(unit_of_work_factory)
+    get_model_pricing_handler = GetModelPricingHandler(unit_of_work_factory)
     model_catalog = ModelCatalogService(get_model_handler, list_models_handler)
+    model_pricing_catalog = ModelPricingCatalogService(get_model_pricing_handler)
     model_gateway = MissingModelGateway()
     embedding_gateway = MissingEmbeddingGateway()
 
     router = create_providers_router(
         create_provider_handler=create_provider_handler,
         add_provider_model_handler=add_provider_model_handler,
+        set_provider_model_pricing_handler=set_provider_model_pricing_handler,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),
     )
     return ProvidersModule(
         router=router,
         model_catalog=model_catalog,
+        model_pricing_catalog=model_pricing_catalog,
         model_gateway=model_gateway,
         embedding_gateway=embedding_gateway,
     )

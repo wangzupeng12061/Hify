@@ -84,6 +84,24 @@ class SqlAlchemyProviderModelRepository:
     async def add(self, model: ProviderModel) -> None:
         self._session.add(_model_to_model(model))
 
+    async def save(self, model: ProviderModel) -> None:
+        existing_model = await self._session.get(ProviderModelModel, model.id)
+        if existing_model is None:
+            self._session.add(_model_to_model(model))
+            return
+        existing_model.model_name = model.model_name
+        existing_model.display_name = model.display_name
+        existing_model.kind = model.kind.value
+        existing_model.status = model.status.value
+        existing_model.context_window_tokens = model.context_window_tokens
+        existing_model.supports_tools = model.supports_tools
+        existing_model.supports_vision = model.supports_vision
+        existing_model.supports_structured_output = model.supports_structured_output
+        existing_model.price_per_1m_input_tokens = model.price_per_1m_input_tokens
+        existing_model.price_per_1m_output_tokens = model.price_per_1m_output_tokens
+        existing_model.version = model.version
+        existing_model.updated_at = model.updated_at
+
     async def get_by_id(self, model_id: UUID) -> ProviderModel | None:
         model = await self._session.get(ProviderModelModel, model_id)
         if model is None:
@@ -190,6 +208,8 @@ def _model_to_model(model: ProviderModel) -> ProviderModelModel:
         supports_tools=model.supports_tools,
         supports_vision=model.supports_vision,
         supports_structured_output=model.supports_structured_output,
+        price_per_1m_input_tokens=model.price_per_1m_input_tokens,
+        price_per_1m_output_tokens=model.price_per_1m_output_tokens,
         version=model.version,
         created_at=model.created_at,
         updated_at=model.updated_at,
@@ -209,6 +229,8 @@ def _model_from_model(model: ProviderModelModel) -> ProviderModel:
         supports_tools=model.supports_tools,
         supports_vision=model.supports_vision,
         supports_structured_output=model.supports_structured_output,
+        price_per_1m_input_tokens=model.price_per_1m_input_tokens,
+        price_per_1m_output_tokens=model.price_per_1m_output_tokens,
         version=model.version,
         created_at=model.created_at,
         updated_at=model.updated_at,

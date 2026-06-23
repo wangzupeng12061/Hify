@@ -191,6 +191,8 @@ def active_chat_model(team_id: UUID) -> ModelInfo:
         supports_tools=True,
         supports_vision=True,
         supports_structured_output=True,
+        price_per_1m_input_tokens=None,
+        price_per_1m_output_tokens=None,
     )
 
 
@@ -289,6 +291,8 @@ async def test_create_agent_rejects_non_chat_model() -> None:
         supports_tools=False,
         supports_vision=False,
         supports_structured_output=False,
+        price_per_1m_input_tokens=None,
+        price_per_1m_output_tokens=None,
     )
     handler = CreateAgentHandler(
         lambda: unit_of_work,

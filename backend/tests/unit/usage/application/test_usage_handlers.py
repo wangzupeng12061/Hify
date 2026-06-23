@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 
 from hify.modules.identity.contracts.dto import ActorContext
+from hify.modules.providers.contracts.dto import ModelPricingInfo
 from hify.modules.usage.application.commands.record_model_usage import (
     RecordModelUsageCommand,
     RecordModelUsageHandler,
@@ -140,6 +141,21 @@ class FakeUsageUnitOfWork:
         self.rolled_back = True
 
 
+class FakeModelPricingCatalog:
+    def __init__(self, pricing: ModelPricingInfo | None) -> None:
+        self.pricing = pricing
+        self.requests: list[tuple[UUID, UUID]] = []
+
+    async def get_model_pricing(
+        self,
+        *,
+        team_id: UUID,
+        model_id: UUID,
+    ) -> ModelPricingInfo | None:
+        self.requests.append((team_id, model_id))
+        return self.pricing
+
+
 def actor_with_usage_read() -> ActorContext:
     return ActorContext(
         user_id=USER_ID,
@@ -177,6 +193,71 @@ async def test_record_model_usage_is_idempotent_by_team_key() -> None:
     assert first.total_tokens == 18
     assert len(unit_of_work.records.items) == 1
     assert unit_of_work.committed
+
+
+@pytest.mark.asyncio
+async def test_record_model_usage_estimates_cost_from_provider_pricing() -> None:
+    unit_of_work = FakeUsageUnitOfWork()
+    pricing_catalog = FakeModelPricingCatalog(
+        ModelPricingInfo(
+            provider_model_id=PROVIDER_MODEL_ID,
+            team_id=TEAM_ID,
+            price_per_1m_input_tokens=Decimal("2.00000000"),
+            price_per_1m_output_tokens=Decimal("8.00000000"),
+        )
+    )
+    handler = RecordModelUsageHandler(lambda: unit_of_work, FixedClock(), pricing_catalog)
+
+    record = await handler.handle(
+        _record_command(input_tokens=1000, output_tokens=2000, idempotency_key="priced")
+    )
+
+    assert record.cost_amount == Decimal("0.01800000")
+    assert pricing_catalog.requests == [(TEAM_ID, PROVIDER_MODEL_ID)]
+
+
+@pytest.mark.asyncio
+async def test_record_model_usage_uses_zero_cost_when_pricing_is_missing() -> None:
+    unit_of_work = FakeUsageUnitOfWork()
+    pricing_catalog = FakeModelPricingCatalog(None)
+    handler = RecordModelUsageHandler(lambda: unit_of_work, FixedClock(), pricing_catalog)
+
+    record = await handler.handle(
+        _record_command(input_tokens=1000, output_tokens=2000, idempotency_key="unpriced")
+    )
+
+    assert record.cost_amount == Decimal("0E-8")
+
+
+@pytest.mark.asyncio
+async def test_record_model_usage_does_not_reprice_existing_idempotent_record() -> None:
+    unit_of_work = FakeUsageUnitOfWork()
+    pricing_catalog = FakeModelPricingCatalog(
+        ModelPricingInfo(
+            provider_model_id=PROVIDER_MODEL_ID,
+            team_id=TEAM_ID,
+            price_per_1m_input_tokens=Decimal("1.00000000"),
+            price_per_1m_output_tokens=Decimal("1.00000000"),
+        )
+    )
+    handler = RecordModelUsageHandler(lambda: unit_of_work, FixedClock(), pricing_catalog)
+    first = await handler.handle(
+        _record_command(input_tokens=1000, output_tokens=1000, idempotency_key="same")
+    )
+    pricing_catalog.pricing = ModelPricingInfo(
+        provider_model_id=PROVIDER_MODEL_ID,
+        team_id=TEAM_ID,
+        price_per_1m_input_tokens=Decimal("99.00000000"),
+        price_per_1m_output_tokens=Decimal("99.00000000"),
+    )
+
+    second = await handler.handle(
+        _record_command(input_tokens=1000, output_tokens=1000, idempotency_key="same")
+    )
+
+    assert second == first
+    assert second.cost_amount == Decimal("0.00200000")
+    assert pricing_catalog.requests == [(TEAM_ID, PROVIDER_MODEL_ID)]
 
 
 @pytest.mark.asyncio

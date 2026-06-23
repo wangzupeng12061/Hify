@@ -11,6 +11,7 @@ from hify.modules.providers.api.schemas import (
     CreateProviderRequest,
     ModelResponse,
     ProviderResponse,
+    SetProviderModelPricingRequest,
 )
 from hify.modules.providers.application.commands.add_provider_model import (
     AddProviderModelCommand,
@@ -20,6 +21,10 @@ from hify.modules.providers.application.commands.create_provider import (
     CreateProviderCommand,
     CreateProviderHandler,
 )
+from hify.modules.providers.application.commands.set_provider_model_pricing import (
+    SetProviderModelPricingCommand,
+    SetProviderModelPricingHandler,
+)
 from hify.shared.domain.errors import ConflictError, HifyError, NotFoundError, PermissionDeniedError
 
 
@@ -27,6 +32,7 @@ def create_providers_router(
     *,
     create_provider_handler: CreateProviderHandler,
     add_provider_model_handler: AddProviderModelHandler,
+    set_provider_model_pricing_handler: SetProviderModelPricingHandler,
     request_authenticator: RequestAuthenticator,
 ) -> APIRouter:
     router = APIRouter(prefix="/providers", tags=["providers"])
@@ -101,6 +107,47 @@ def create_providers_router(
                 supports_tools=model.supports_tools,
                 supports_vision=model.supports_vision,
                 supports_structured_output=model.supports_structured_output,
+                price_per_1m_input_tokens=model.price_per_1m_input_tokens,
+                price_per_1m_output_tokens=model.price_per_1m_output_tokens,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except HifyError as exc:
+            raise _to_http_error(exc) from exc
+
+    @router.put(
+        "/models/{model_id}/pricing",
+        response_model=ModelResponse,
+    )
+    async def set_provider_model_pricing(
+        model_id: UUID,
+        request: SetProviderModelPricingRequest,
+        actor: ActorContext = Depends(get_current_actor),
+    ) -> ModelResponse:
+        try:
+            command = SetProviderModelPricingCommand(
+                actor=actor,
+                model_id=model_id,
+                price_per_1m_input_tokens=request.price_per_1m_input_tokens,
+                price_per_1m_output_tokens=request.price_per_1m_output_tokens,
+            )
+            model = await set_provider_model_pricing_handler.handle(command)
+            return ModelResponse(
+                id=model.id,
+                team_id=model.team_id,
+                provider_id=model.provider_id,
+                provider_type=model.provider_type,
+                provider_name=model.provider_name,
+                model_name=model.model_name,
+                display_name=model.display_name,
+                kind=model.kind,
+                status=model.status,
+                context_window_tokens=model.context_window_tokens,
+                supports_tools=model.supports_tools,
+                supports_vision=model.supports_vision,
+                supports_structured_output=model.supports_structured_output,
+                price_per_1m_input_tokens=model.price_per_1m_input_tokens,
+                price_per_1m_output_tokens=model.price_per_1m_output_tokens,
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

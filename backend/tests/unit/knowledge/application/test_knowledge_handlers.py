@@ -154,6 +154,8 @@ class FakeModelCatalog:
             supports_tools=False,
             supports_vision=False,
             supports_structured_output=False,
+            price_per_1m_input_tokens=None,
+            price_per_1m_output_tokens=None,
         )
 
     async def list_models(self, *, team_id: UUID) -> tuple[ModelInfo, ...]:

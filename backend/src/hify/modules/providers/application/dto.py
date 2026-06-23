@@ -32,4 +32,6 @@ def model_info_from_domain(provider: ModelProvider, model: ProviderModel) -> Mod
         supports_tools=model.supports_tools,
         supports_vision=model.supports_vision,
         supports_structured_output=model.supports_structured_output,
+        price_per_1m_input_tokens=model.price_per_1m_input_tokens,
+        price_per_1m_output_tokens=model.price_per_1m_output_tokens,
     )

@@ -10,6 +10,7 @@ from hify.modules.providers.contracts.dto import (
     EmbeddingResult,
     ModelChunk,
     ModelInfo,
+    ModelPricingInfo,
     ModelRequest,
 )
 
@@ -18,6 +19,15 @@ class ModelCatalog(Protocol):
     async def get_model(self, *, team_id: UUID, model_id: UUID) -> ModelInfo: ...
 
     async def list_models(self, *, team_id: UUID) -> tuple[ModelInfo, ...]: ...
+
+
+class ModelPricingCatalog(Protocol):
+    async def get_model_pricing(
+        self,
+        *,
+        team_id: UUID,
+        model_id: UUID,
+    ) -> ModelPricingInfo | None: ...
 
 
 class ModelGateway(Protocol):

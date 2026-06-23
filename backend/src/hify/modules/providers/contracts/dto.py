@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal, Mapping, Protocol, TypeAlias
 from uuid import UUID
 
@@ -33,6 +34,16 @@ class ModelInfo:
     supports_tools: bool
     supports_vision: bool
     supports_structured_output: bool
+    price_per_1m_input_tokens: Decimal | None
+    price_per_1m_output_tokens: Decimal | None
+
+
+@dataclass(frozen=True, slots=True)
+class ModelPricingInfo:
+    provider_model_id: UUID
+    team_id: UUID
+    price_per_1m_input_tokens: Decimal | None
+    price_per_1m_output_tokens: Decimal | None
 
 
 @dataclass(frozen=True, slots=True)
