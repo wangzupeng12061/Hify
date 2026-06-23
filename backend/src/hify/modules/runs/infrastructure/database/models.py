@@ -33,6 +33,10 @@ class RunModel(Base):
         ),
         CheckConstraint("step_count >= 0", name="ck_runs_runs__step_count_non_negative"),
         CheckConstraint("event_count >= 0", name="ck_runs_runs__event_count_non_negative"),
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms >= 0",
+            name="ck_runs_runs__duration_ms_non_negative",
+        ),
         Index(
             "uq_runs_runs__team_conversation_idempotency",
             "team_id",
@@ -96,6 +100,7 @@ class RunModel(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -114,6 +119,10 @@ class RunStepModel(Base):
         CheckConstraint(
             "status IN ('started', 'succeeded', 'failed', 'cancelled')",
             name="ck_runs_steps__status",
+        ),
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms >= 0",
+            name="ck_runs_steps__duration_ms_non_negative",
         ),
         Index("uq_runs_steps__run_sequence", "run_id", "sequence_number", unique=True),
         Index("ix_runs_steps__team_run_sequence", "team_id", "run_id", "sequence_number"),
@@ -145,6 +154,7 @@ class RunStepModel(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
