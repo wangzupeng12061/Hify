@@ -22,6 +22,7 @@ def test_workflow_routes_require_configured_authentication() -> None:
             update_workflow_draft_handler=UnusedHandler(),
             publish_workflow_handler=UnusedHandler(),
             get_workflow_handler=UnusedHandler(),
+            list_workflows_handler=UnusedHandler(),
             validate_workflow_draft_handler=UnusedHandler(),
             request_authenticator=AuthenticationNotConfiguredAuthenticator(),
         )

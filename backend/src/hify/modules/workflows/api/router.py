@@ -29,6 +29,10 @@ from hify.modules.workflows.application.queries.get_workflow import (
     GetWorkflowForActorHandler,
     GetWorkflowForActorQuery,
 )
+from hify.modules.workflows.application.queries.list_workflows import (
+    ListWorkflowsForActorHandler,
+    ListWorkflowsForActorQuery,
+)
 from hify.modules.workflows.application.queries.validate_workflow import (
     ValidateWorkflowDraftHandler,
     ValidateWorkflowDraftQuery,
@@ -42,6 +46,7 @@ def create_workflows_router(
     update_workflow_draft_handler: UpdateWorkflowDraftHandler,
     publish_workflow_handler: PublishWorkflowHandler,
     get_workflow_handler: GetWorkflowForActorHandler,
+    list_workflows_handler: ListWorkflowsForActorHandler,
     validate_workflow_draft_handler: ValidateWorkflowDraftHandler,
     request_authenticator: RequestAuthenticator,
 ) -> APIRouter:
@@ -69,6 +74,16 @@ def create_workflows_router(
             return WorkflowResponse.model_validate(workflow)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except HifyError as exc:
+            raise _to_http_error(exc) from exc
+
+    @router.get("", response_model=tuple[WorkflowResponse, ...])
+    async def list_workflows(
+        actor: ActorContext = Depends(get_current_actor),
+    ) -> tuple[WorkflowResponse, ...]:
+        try:
+            workflows = await list_workflows_handler.handle(ListWorkflowsForActorQuery(actor=actor))
+            return tuple(WorkflowResponse.model_validate(workflow) for workflow in workflows)
         except HifyError as exc:
             raise _to_http_error(exc) from exc
 

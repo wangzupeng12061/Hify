@@ -50,6 +50,19 @@ class SqlAlchemyWorkflowRepository:
             return None
         return _workflow_from_model(model)
 
+    async def list_by_team(self, *, team_id: UUID) -> tuple[Workflow, ...]:
+        statement = (
+            select(WorkflowModel)
+            .where(WorkflowModel.team_id == team_id)
+            .order_by(
+                WorkflowModel.status.asc(),
+                WorkflowModel.created_at.desc(),
+                WorkflowModel.id.desc(),
+            )
+        )
+        models = (await self._session.scalars(statement)).all()
+        return tuple(_workflow_from_model(model) for model in models)
+
 
 class SqlAlchemyWorkflowVersionRepository:
     def __init__(self, session: AsyncSession) -> None:
