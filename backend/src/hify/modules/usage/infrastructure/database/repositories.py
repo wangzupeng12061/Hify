@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -75,6 +75,85 @@ class SqlAlchemyUsageRecordRepository:
         )
         row = (await self._session.execute(statement)).one()
         return (int(row[0]), int(row[1]), int(row[2]), str(row[3]))
+
+    async def summarize_by_model_for_team_period(
+        self,
+        *,
+        team_id: UUID,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> tuple[tuple[UUID, str, str, int, int, int, str], ...]:
+        statement = (
+            select(
+                UsageRecordModel.provider_model_id,
+                UsageRecordModel.provider,
+                UsageRecordModel.model,
+                func.coalesce(func.sum(UsageRecordModel.input_tokens), 0),
+                func.coalesce(func.sum(UsageRecordModel.output_tokens), 0),
+                func.coalesce(func.sum(UsageRecordModel.total_tokens), 0),
+                func.coalesce(func.sum(UsageRecordModel.cost_amount), Decimal("0")),
+            )
+            .where(
+                UsageRecordModel.team_id == team_id,
+                UsageRecordModel.occurred_at >= period_start,
+                UsageRecordModel.occurred_at < period_end,
+            )
+            .group_by(
+                UsageRecordModel.provider_model_id,
+                UsageRecordModel.provider,
+                UsageRecordModel.model,
+            )
+            .order_by(func.sum(UsageRecordModel.cost_amount).desc(), UsageRecordModel.model.asc())
+        )
+        rows = await self._session.execute(statement)
+        return tuple(
+            (
+                row[0],
+                str(row[1]),
+                str(row[2]),
+                int(row[3]),
+                int(row[4]),
+                int(row[5]),
+                str(row[6]),
+            )
+            for row in rows
+        )
+
+    async def summarize_by_day_for_team_period(
+        self,
+        *,
+        team_id: UUID,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> tuple[tuple[date, int, int, int, str], ...]:
+        usage_day = func.date_trunc("day", UsageRecordModel.occurred_at).label("usage_day")
+        statement = (
+            select(
+                usage_day,
+                func.coalesce(func.sum(UsageRecordModel.input_tokens), 0),
+                func.coalesce(func.sum(UsageRecordModel.output_tokens), 0),
+                func.coalesce(func.sum(UsageRecordModel.total_tokens), 0),
+                func.coalesce(func.sum(UsageRecordModel.cost_amount), Decimal("0")),
+            )
+            .where(
+                UsageRecordModel.team_id == team_id,
+                UsageRecordModel.occurred_at >= period_start,
+                UsageRecordModel.occurred_at < period_end,
+            )
+            .group_by(usage_day)
+            .order_by(usage_day.asc())
+        )
+        rows = await self._session.execute(statement)
+        return tuple(
+            (
+                row[0].date() if isinstance(row[0], datetime) else row[0],
+                int(row[1]),
+                int(row[2]),
+                int(row[3]),
+                str(row[4]),
+            )
+            for row in rows
+        )
 
 
 class SqlAlchemyUsageQuotaRepository:

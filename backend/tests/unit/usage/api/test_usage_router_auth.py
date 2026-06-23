@@ -21,6 +21,9 @@ def test_usage_routes_require_configured_authentication() -> None:
             get_team_summary_handler=UnusedHandler(),
             get_run_summary_handler=UnusedHandler(),
             get_quota_status_handler=UnusedHandler(),
+            get_cost_summary_handler=UnusedHandler(),
+            get_cost_by_model_handler=UnusedHandler(),
+            get_cost_by_day_handler=UnusedHandler(),
             set_quota_handler=UnusedHandler(),
             request_authenticator=AuthenticationNotConfiguredAuthenticator(),
         )
