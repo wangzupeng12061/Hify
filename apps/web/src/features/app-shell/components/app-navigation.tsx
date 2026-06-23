@@ -12,7 +12,7 @@ const NAVIGATION_ITEMS = [
   { href: "/knowledge", label: "Knowledge" },
   { href: "/tools", label: "Tools" },
   { href: "/mcp", label: "MCP" },
-  { href: "#", label: "Usage" },
+  { href: "/usage", label: "Usage" },
 ];
 
 export function AppNavigation() {
