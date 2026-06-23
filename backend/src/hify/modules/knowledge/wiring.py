@@ -16,6 +16,9 @@ from hify.modules.knowledge.application.queries.get_knowledge_base import (
     KnowledgeBaseCatalogService,
     ListKnowledgeBasesForActorHandler,
 )
+from hify.modules.knowledge.application.queries.list_documents import (
+    ListKnowledgeDocumentsForActorHandler,
+)
 from hify.modules.knowledge.application.queries.retrieve_chunks import KnowledgeRetrieverService
 from hify.modules.knowledge.contracts.services import KnowledgeBaseCatalog, KnowledgeRetriever
 from hify.modules.knowledge.infrastructure.database.uow import SqlAlchemyKnowledgeUnitOfWork
@@ -49,6 +52,7 @@ def create_knowledge_module(
     )
     list_knowledge_bases_handler = ListKnowledgeBasesForActorHandler(unit_of_work_factory)
     get_knowledge_base_handler = GetKnowledgeBaseForActorHandler(unit_of_work_factory)
+    list_knowledge_documents_handler = ListKnowledgeDocumentsForActorHandler(unit_of_work_factory)
     ingest_document_handler = IngestDocumentHandler(
         unit_of_work_factory,
         embedding_gateway,
@@ -60,6 +64,7 @@ def create_knowledge_module(
         create_knowledge_base_handler=create_knowledge_base_handler,
         list_knowledge_bases_handler=list_knowledge_bases_handler,
         get_knowledge_base_handler=get_knowledge_base_handler,
+        list_knowledge_documents_handler=list_knowledge_documents_handler,
         ingest_document_handler=ingest_document_handler,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),
     )

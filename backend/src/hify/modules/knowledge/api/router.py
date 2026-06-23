@@ -25,6 +25,10 @@ from hify.modules.knowledge.application.queries.get_knowledge_base import (
     GetKnowledgeBaseForActorQuery,
     ListKnowledgeBasesForActorHandler,
 )
+from hify.modules.knowledge.application.queries.list_documents import (
+    ListKnowledgeDocumentsForActorHandler,
+    ListKnowledgeDocumentsForActorQuery,
+)
 from hify.shared.domain.errors import ConflictError, HifyError, NotFoundError, PermissionDeniedError
 
 
@@ -33,6 +37,7 @@ def create_knowledge_router(
     create_knowledge_base_handler: CreateKnowledgeBaseHandler,
     list_knowledge_bases_handler: ListKnowledgeBasesForActorHandler,
     get_knowledge_base_handler: GetKnowledgeBaseForActorHandler,
+    list_knowledge_documents_handler: ListKnowledgeDocumentsForActorHandler,
     ingest_document_handler: IngestDocumentHandler,
     request_authenticator: RequestAuthenticator,
 ) -> APIRouter:
@@ -110,6 +115,24 @@ def create_knowledge_router(
             return KnowledgeDocumentResponse.model_validate(document)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except HifyError as exc:
+            raise _to_http_error(exc) from exc
+
+    @router.get(
+        "/{knowledge_base_id}/documents", response_model=tuple[KnowledgeDocumentResponse, ...]
+    )
+    async def list_documents(
+        knowledge_base_id: UUID,
+        actor: ActorContext = Depends(get_current_actor),
+    ) -> tuple[KnowledgeDocumentResponse, ...]:
+        try:
+            documents = await list_knowledge_documents_handler.handle(
+                ListKnowledgeDocumentsForActorQuery(
+                    actor=actor,
+                    knowledge_base_id=knowledge_base_id,
+                )
+            )
+            return tuple(KnowledgeDocumentResponse.model_validate(item) for item in documents)
         except HifyError as exc:
             raise _to_http_error(exc) from exc
 
