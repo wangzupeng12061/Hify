@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hify.modules.conversations.domain.entities import (
@@ -46,6 +47,26 @@ class SqlAlchemyConversationRepository:
         if model is None:
             return None
         return _conversation_from_model(model)
+
+    async def list_by_team(
+        self,
+        *,
+        team_id: UUID,
+        before: tuple[datetime, UUID] | None,
+        limit: int,
+    ) -> tuple[Conversation, ...]:
+        statement = (
+            select(ConversationModel)
+            .where(ConversationModel.team_id == team_id)
+            .order_by(ConversationModel.created_at.desc(), ConversationModel.id.desc())
+            .limit(limit)
+        )
+        if before is not None:
+            statement = statement.where(
+                tuple_(ConversationModel.created_at, ConversationModel.id) < before
+            )
+        models = (await self._session.scalars(statement)).all()
+        return tuple(_conversation_from_model(model) for model in models)
 
 
 class SqlAlchemyConversationMessageRepository:

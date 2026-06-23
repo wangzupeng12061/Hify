@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   useAppendConversationMessage,
+  useConversation,
   useConversationMessages,
+  useConversations,
   useCreateConversation,
   useSubmitMessageFeedback,
 } from "@/features/conversations";
@@ -86,6 +88,59 @@ describe("conversation hooks", () => {
         query: {
           cursor: "cursor-1",
           limit: 10,
+        },
+      },
+    });
+  });
+
+  it("lists conversations with query params", async () => {
+    apiClientMock.GET.mockResolvedValueOnce({
+      data: {
+        has_more: false,
+        items: [createConversationResponse()],
+        next_cursor: null,
+      },
+      response: new Response(null, { status: 200 }),
+    });
+
+    const { result } = renderHook(
+      () =>
+        useConversations({
+          cursor: "cursor-1",
+          limit: 10,
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(hifyApiClient.GET).toHaveBeenCalledWith("/conversations", {
+      params: {
+        query: {
+          cursor: "cursor-1",
+          limit: 10,
+        },
+      },
+    });
+  });
+
+  it("gets conversation details with path params", async () => {
+    apiClientMock.GET.mockResolvedValueOnce({
+      data: createConversationResponse(),
+      response: new Response(null, { status: 200 }),
+    });
+
+    const { result } = renderHook(
+      () => useConversation({ conversationId: "conversation-1" }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(hifyApiClient.GET).toHaveBeenCalledWith("/conversations/{conversation_id}", {
+      params: {
+        path: {
+          conversation_id: "conversation-1",
         },
       },
     });

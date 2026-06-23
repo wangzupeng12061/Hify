@@ -3,6 +3,7 @@ import type { components } from "@/lib/api/generated/schema";
 export type AppendConversationMessageRequest =
   components["schemas"]["AppendConversationMessageRequest"];
 export type Conversation = components["schemas"]["ConversationResponse"];
+export type ConversationPage = components["schemas"]["ConversationPageResponse"];
 export type ConversationMessage = components["schemas"]["ConversationMessageResponse"];
 export type ConversationMessagePage =
   components["schemas"]["ConversationMessagePageResponse"];
@@ -17,6 +18,15 @@ export type AppendConversationMessageInput = AppendConversationMessageRequest & 
 
 export type ListConversationMessagesInput = {
   conversationId: string;
+  cursor?: string | null;
+  limit?: number;
+};
+
+export type GetConversationInput = {
+  conversationId: string;
+};
+
+export type ListConversationsInput = {
   cursor?: string | null;
   limit?: number;
 };

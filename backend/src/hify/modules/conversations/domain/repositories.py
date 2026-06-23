@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -16,6 +17,14 @@ class ConversationRepository(Protocol):
     async def save(self, conversation: Conversation) -> None: ...
 
     async def get_by_id(self, conversation_id: UUID) -> Conversation | None: ...
+
+    async def list_by_team(
+        self,
+        *,
+        team_id: UUID,
+        before: tuple[datetime, UUID] | None,
+        limit: int,
+    ) -> tuple[Conversation, ...]: ...
 
 
 class ConversationMessageRepository(Protocol):

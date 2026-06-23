@@ -37,6 +37,13 @@ class ConversationMessagePage:
 
 
 @dataclass(frozen=True, slots=True)
+class ConversationPage:
+    items: tuple[ConversationInfo, ...]
+    next_cursor: str | None
+    has_more: bool
+
+
+@dataclass(frozen=True, slots=True)
 class MessageFeedbackInfo:
     id: UUID
     team_id: UUID

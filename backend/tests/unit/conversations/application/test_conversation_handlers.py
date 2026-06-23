@@ -30,6 +30,10 @@ from hify.modules.conversations.application.queries.list_conversation_messages i
     ListConversationMessagesHandler,
     ListConversationMessagesQuery,
 )
+from hify.modules.conversations.application.queries.list_conversations import (
+    ListConversationsHandler,
+    ListConversationsQuery,
+)
 from hify.modules.conversations.domain.entities import (
     Conversation,
     ConversationMessage,
@@ -83,6 +87,25 @@ class FakeConversationRepository:
 
     async def get_by_id(self, conversation_id: UUID) -> Conversation | None:
         return self.items.get(conversation_id)
+
+    async def list_by_team(
+        self,
+        *,
+        team_id: UUID,
+        before: tuple[datetime, UUID] | None,
+        limit: int,
+    ) -> tuple[Conversation, ...]:
+        conversations = [
+            conversation
+            for conversation in self.items.values()
+            if conversation.team_id == team_id
+            and (before is None or (conversation.created_at, conversation.id) < before)
+        ]
+        conversations.sort(
+            key=lambda conversation: (conversation.created_at, conversation.id),
+            reverse=True,
+        )
+        return tuple(conversations[:limit])
 
 
 class FakeMessageRepository:
@@ -312,6 +335,49 @@ async def test_append_message_is_idempotent_and_messages_page_uses_cursor() -> N
     )
     assert page.items == (first,)
     assert not page.has_more
+
+
+@pytest.mark.asyncio
+async def test_list_conversations_uses_keyset_cursor() -> None:
+    unit_of_work = FakeConversationsUnitOfWork()
+    actor = actor_with_run_permissions()
+    agent_catalog = FakeAgentCatalog(published_agent_version(actor.team_id))
+    handler = CreateConversationHandler(lambda: unit_of_work, agent_catalog, FixedClock())
+    first = await handler.handle(
+        CreateConversationCommand(
+            actor=actor,
+            agent_id=agent_catalog.agent_version.agent_id,
+            title="First",
+        )
+    )
+    second = await handler.handle(
+        CreateConversationCommand(
+            actor=actor,
+            agent_id=agent_catalog.agent_version.agent_id,
+            title="Second",
+        )
+    )
+    list_handler = ListConversationsHandler(lambda: unit_of_work)
+
+    expected = tuple(
+        sorted(
+            (first, second),
+            key=lambda conversation: (conversation.created_at, conversation.id),
+            reverse=True,
+        )
+    )
+
+    page = await list_handler.handle(
+        ListConversationsQuery(team_id=actor.team_id, cursor=None, limit=1)
+    )
+    next_page = await list_handler.handle(
+        ListConversationsQuery(team_id=actor.team_id, cursor=page.next_cursor, limit=1)
+    )
+
+    assert page.items == (expected[0],)
+    assert page.has_more
+    assert next_page.items == (expected[1],)
+    assert not next_page.has_more
 
 
 @pytest.mark.asyncio

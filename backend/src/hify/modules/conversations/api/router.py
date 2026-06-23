@@ -9,6 +9,7 @@ from hify.modules.conversations.api.schemas import (
     AppendConversationMessageRequest,
     ConversationMessagePageResponse,
     ConversationMessageResponse,
+    ConversationPageResponse,
     ConversationResponse,
     CreateConversationRequest,
     MessageFeedbackResponse,
@@ -30,6 +31,14 @@ from hify.modules.conversations.application.queries.list_conversation_messages i
     ListConversationMessagesForActorHandler,
     ListConversationMessagesForActorQuery,
 )
+from hify.modules.conversations.application.queries.list_conversations import (
+    ListConversationsForActorHandler,
+    ListConversationsForActorQuery,
+)
+from hify.modules.conversations.application.queries.get_conversation import (
+    GetConversationForActorHandler,
+    GetConversationForActorQuery,
+)
 from hify.modules.identity.contracts.dto import ActorContext
 from hify.shared.domain.errors import ConflictError, HifyError, NotFoundError, PermissionDeniedError
 
@@ -38,6 +47,8 @@ def create_conversations_router(
     *,
     create_conversation_handler: CreateConversationHandler,
     append_message_handler: AppendConversationMessageHandler,
+    get_conversation_handler: GetConversationForActorHandler,
+    list_conversations_handler: ListConversationsForActorHandler,
     list_messages_handler: ListConversationMessagesForActorHandler,
     submit_feedback_handler: SubmitMessageFeedbackHandler,
     request_authenticator: RequestAuthenticator,
@@ -62,6 +73,39 @@ def create_conversations_router(
                 title=request.title,
             )
             conversation = await create_conversation_handler.handle(command)
+            return ConversationResponse.model_validate(conversation)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except HifyError as exc:
+            raise _to_http_error(exc) from exc
+
+    @router.get("", response_model=ConversationPageResponse)
+    async def list_conversations(
+        cursor: str | None = None,
+        limit: int = Query(default=20, ge=1, le=100),
+        actor: ActorContext = Depends(get_current_actor),
+    ) -> ConversationPageResponse:
+        try:
+            query = ListConversationsForActorQuery(
+                actor=actor,
+                cursor=cursor,
+                limit=limit,
+            )
+            page = await list_conversations_handler.handle(query)
+            return ConversationPageResponse.model_validate(page)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except HifyError as exc:
+            raise _to_http_error(exc) from exc
+
+    @router.get("/{conversation_id}", response_model=ConversationResponse)
+    async def get_conversation(
+        conversation_id: UUID,
+        actor: ActorContext = Depends(get_current_actor),
+    ) -> ConversationResponse:
+        try:
+            query = GetConversationForActorQuery(actor=actor, conversation_id=conversation_id)
+            conversation = await get_conversation_handler.handle(query)
             return ConversationResponse.model_validate(conversation)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

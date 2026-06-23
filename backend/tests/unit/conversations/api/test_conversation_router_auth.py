@@ -20,6 +20,8 @@ def test_conversation_routes_require_configured_authentication() -> None:
         create_conversations_router(
             create_conversation_handler=UnusedHandler(),
             append_message_handler=UnusedHandler(),
+            get_conversation_handler=UnusedHandler(),
+            list_conversations_handler=UnusedHandler(),
             list_messages_handler=UnusedHandler(),
             submit_feedback_handler=UnusedHandler(),
             request_authenticator=AuthenticationNotConfiguredAuthenticator(),

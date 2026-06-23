@@ -287,6 +287,22 @@ select {
   white-space: pre-wrap;
 }
 
+.conversation-list-item {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.conversation-list-item h3 {
+  font-size: 1.125rem;
+  margin: 0 0 0.5rem;
+}
+
+.conversation-list-item .button {
+  margin-top: 0;
+}
+
 .timeline-list {
   display: grid;
   gap: 0.75rem;
