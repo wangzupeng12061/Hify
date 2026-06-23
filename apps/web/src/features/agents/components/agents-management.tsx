@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 
+import { useWorkflows, type Workflow } from "@/features/workflows";
 import { HifyApiError } from "@/lib/api/errors";
 
 import { useCreateAgent, usePublishAgent } from "../hooks";
@@ -33,12 +34,19 @@ const initialPublishForm: PublishFormState = {
   agentId: "",
 };
 
+const EMPTY_WORKFLOWS: Workflow[] = [];
+
 export function AgentsManagement() {
   const createAgentMutation = useCreateAgent();
   const publishAgentMutation = usePublishAgent();
+  const workflowsQuery = useWorkflows();
   const [agentForm, setAgentForm] = useState(initialAgentForm);
   const [publishForm, setPublishForm] = useState(initialPublishForm);
   const [formError, setFormError] = useState<string | null>(null);
+  const workflows = workflowsQuery.data ?? EMPTY_WORKFLOWS;
+  const publishedWorkflows = useMemo(() => getPublishedWorkflows(workflows), [workflows]);
+  const selectedWorkflow =
+    publishedWorkflows.find((workflow) => workflow.id === agentForm.workflowId) ?? null;
 
   async function handleCreateAgent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -73,7 +81,8 @@ export function AgentsManagement() {
     }
   }
 
-  const operationError = createAgentMutation.error ?? publishAgentMutation.error;
+  const operationError =
+    workflowsQuery.error ?? createAgentMutation.error ?? publishAgentMutation.error;
   const isSubmitting = createAgentMutation.isPending || publishAgentMutation.isPending;
 
   return (
@@ -97,6 +106,9 @@ export function AgentsManagement() {
           isSubmitting={createAgentMutation.isPending}
           onChange={setAgentForm}
           onSubmit={handleCreateAgent}
+          publishedWorkflows={publishedWorkflows}
+          selectedWorkflow={selectedWorkflow}
+          workflowsLoading={workflowsQuery.isLoading}
         />
         <PublishAgentForm
           form={publishForm}
@@ -110,6 +122,7 @@ export function AgentsManagement() {
       <AgentSummary
         agent={createAgentMutation.data}
         isSubmitting={isSubmitting}
+        selectedWorkflow={selectedWorkflow}
         version={publishAgentMutation.data}
       />
     </div>
@@ -122,12 +135,18 @@ function CreateAgentForm({
   isSubmitting,
   onChange,
   onSubmit,
+  publishedWorkflows,
+  selectedWorkflow,
+  workflowsLoading,
 }: {
   agent?: Agent;
   form: AgentFormState;
   isSubmitting: boolean;
   onChange: (form: AgentFormState) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  publishedWorkflows: Workflow[];
+  selectedWorkflow: Workflow | null;
+  workflowsLoading: boolean;
 }) {
   return (
     <form className="panel form-panel" onSubmit={onSubmit}>
@@ -170,14 +189,29 @@ function CreateAgentForm({
         />
       </label>
       <label className="form-field">
-        Workflow ID
-        <input
+        Workflow
+        <select
           name="workflowId"
           onChange={(event) => onChange({ ...form, workflowId: event.target.value })}
-          placeholder="Optional"
           value={form.workflowId}
-        />
+        >
+          <option value="">No workflow binding</option>
+          {publishedWorkflows.map((workflow) => (
+            <option key={workflow.id} value={workflow.id}>
+              {formatWorkflowOption(workflow)}
+            </option>
+          ))}
+        </select>
       </label>
+      {workflowsLoading ? <p className="muted">Loading published workflows...</p> : null}
+      {!workflowsLoading && publishedWorkflows.length === 0 ? (
+        <p className="muted">
+          No published workflows are available. Create and publish a workflow first to bind it.
+        </p>
+      ) : null}
+      {selectedWorkflow ? (
+        <ResultLine label="Selected workflow ID" value={selectedWorkflow.id} />
+      ) : null}
       <label className="form-field">
         System prompt
         <textarea
@@ -238,10 +272,12 @@ function PublishAgentForm({
 function AgentSummary({
   agent,
   isSubmitting,
+  selectedWorkflow,
   version,
 }: {
   agent?: Agent;
   isSubmitting: boolean;
+  selectedWorkflow: Workflow | null;
   version?: AgentVersion;
 }) {
   const summaryItems = useMemo(
@@ -249,10 +285,23 @@ function AgentSummary({
       { label: "Latest agent", value: agent?.name ?? "Not created in this session" },
       { label: "Latest agent ID", value: agent?.id ?? "Not available" },
       { label: "Provider model ID", value: agent?.provider_model_id ?? "Not available" },
+      {
+        label: "Configured workflow",
+        value:
+          selectedWorkflow?.name ??
+          (agent?.workflow_id ? `Workflow ${agent.workflow_id}` : "No workflow binding"),
+      },
+      {
+        label: "Published workflow",
+        value:
+          version?.workflow_name && version.workflow_version_number
+            ? `${version.workflow_name} v${version.workflow_version_number}`
+            : "Not published with workflow",
+      },
       { label: "Latest version", value: version ? `${version.version_number}` : "Not published" },
       { label: "Operation status", value: isSubmitting ? "Submitting" : "Ready" },
     ],
-    [agent, isSubmitting, version],
+    [agent, isSubmitting, selectedWorkflow, version],
   );
 
   return (
@@ -310,4 +359,14 @@ function parseCommaSeparatedIds(value: string): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+function getPublishedWorkflows(workflows: Workflow[]): Workflow[] {
+  return workflows.filter(
+    (workflow) => workflow.status === "published" && workflow.latest_version_number > 0,
+  );
+}
+
+function formatWorkflowOption(workflow: Workflow): string {
+  return `${workflow.name} · v${workflow.latest_version_number}`;
 }
