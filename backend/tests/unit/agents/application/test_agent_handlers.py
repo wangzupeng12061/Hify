@@ -7,12 +7,22 @@ from uuid import UUID
 
 import pytest
 
-from hify.modules.agents.application.commands.create_agent import CreateAgentCommand, CreateAgentHandler
-from hify.modules.agents.application.commands.publish_agent import PublishAgentCommand, PublishAgentHandler
+from hify.modules.agents.application.commands.create_agent import (
+    CreateAgentCommand,
+    CreateAgentHandler,
+)
+from hify.modules.agents.application.commands.publish_agent import (
+    PublishAgentCommand,
+    PublishAgentHandler,
+)
 from hify.modules.agents.application.queries.get_agent_version import (
     AgentCatalogService,
     GetAgentVersionHandler,
     GetLatestPublishedAgentVersionHandler,
+)
+from hify.modules.agents.application.queries.list_agents import (
+    ListAgentsForActorHandler,
+    ListAgentsForActorQuery,
 )
 from hify.modules.agents.domain.entities import Agent, AgentVersion
 from hify.modules.agents.domain.errors import (
@@ -115,6 +125,9 @@ class FakeAgentRepository:
 
     async def get_by_id(self, agent_id: UUID) -> Agent | None:
         return self.items.get(agent_id)
+
+    async def list_by_team(self, *, team_id: UUID) -> tuple[Agent, ...]:
+        return tuple(agent for agent in self.items.values() if agent.team_id == team_id)
 
     async def get_by_team_and_name(self, *, team_id: UUID, name: str) -> Agent | None:
         for agent in self.items.values():
@@ -314,6 +327,41 @@ async def test_create_agent_rejects_non_chat_model() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_agents_returns_team_agents_and_requires_permission() -> None:
+    unit_of_work = FakeAgentsUnitOfWork()
+    actor = actor_with_agent_permission()
+    model_catalog = FakeModelCatalog(active_chat_model(actor.team_id))
+    agent = await CreateAgentHandler(
+        lambda: unit_of_work,
+        model_catalog,
+        FakeKnowledgeBaseCatalog(),
+        FixedClock(),
+    ).handle(
+        CreateAgentCommand(
+            actor=actor,
+            name="Support Bot",
+            description=None,
+            system_prompt="You are helpful.",
+            provider_model_id=model_catalog.model.id,
+        )
+    )
+    handler = ListAgentsForActorHandler(lambda: unit_of_work)
+
+    listed = await handler.handle(ListAgentsForActorQuery(actor=actor))
+
+    assert tuple(item.id for item in listed) == (agent.id,)
+    viewer = ActorContext(
+        user_id=actor.user_id,
+        team_id=actor.team_id,
+        membership_id=actor.membership_id,
+        role="viewer",
+        permissions=(),
+    )
+    with pytest.raises(AgentPermissionDeniedError):
+        await handler.handle(ListAgentsForActorQuery(actor=viewer))
+
+
+@pytest.mark.asyncio
 async def test_publish_agent_creates_version_and_catalog_returns_it() -> None:
     unit_of_work = FakeAgentsUnitOfWork()
     actor = actor_with_agent_permission()
@@ -344,7 +392,9 @@ async def test_publish_agent_creates_version_and_catalog_returns_it() -> None:
         FixedClock(),
     )
 
-    agent_version = await publish_handler.handle(PublishAgentCommand(actor=actor, agent_id=agent.id))
+    agent_version = await publish_handler.handle(
+        PublishAgentCommand(actor=actor, agent_id=agent.id)
+    )
 
     catalog = AgentCatalogService(
         GetAgentVersionHandler(lambda: unit_of_work),
@@ -398,7 +448,9 @@ async def test_publish_agent_snapshots_bound_workflow_version() -> None:
         FixedClock(),
     )
 
-    agent_version = await publish_handler.handle(PublishAgentCommand(actor=actor, agent_id=agent.id))
+    agent_version = await publish_handler.handle(
+        PublishAgentCommand(actor=actor, agent_id=agent.id)
+    )
 
     assert agent.workflow_id == workflow_version.workflow_id
     assert agent_version.workflow_id == workflow_version.workflow_id

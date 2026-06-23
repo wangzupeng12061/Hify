@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState, type FormEvent } from "react";
 
+import { useAgents, type Agent } from "@/features/agents";
 import {
   useAppendConversationMessage,
   useConversationMessages,
@@ -42,7 +43,10 @@ const initialMessageForm: MessageFormState = {
   content: "",
 };
 
+const EMPTY_AGENTS: Agent[] = [];
+
 export function ChatRunsWorkspace() {
+  const agentsQuery = useAgents();
   const createConversationMutation = useCreateConversation();
   const appendMessageMutation = useAppendConversationMessage();
   const createRunMutation = useCreateRun();
@@ -58,6 +62,8 @@ export function ChatRunsWorkspace() {
   const [run, setRun] = useState<Run | null>(null);
   const [streamedEvents, setStreamedEvents] = useState<RunEvent[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
+  const agents = agentsQuery.data ?? EMPTY_AGENTS;
+  const runnableAgents = useMemo(() => getRunnableAgents(agents), [agents]);
 
   const conversationMessagesQuery = useConversationMessages(
     conversation ? { conversationId: conversation.id, limit: 50 } : null,
@@ -85,6 +91,7 @@ export function ChatRunsWorkspace() {
     appendMessageMutation.error ??
     createRunMutation.error ??
     cancelRunMutation.error ??
+    agentsQuery.error ??
     conversationMessagesQuery.error ??
     runQuery.error ??
     runDiagnosticsQuery.error ??
@@ -199,11 +206,13 @@ export function ChatRunsWorkspace() {
 
       <section className="provider-layout">
         <ConversationForm
+          agentsLoading={agentsQuery.isLoading}
           conversation={conversation}
           form={conversationForm}
           isSubmitting={createConversationMutation.isPending}
           onChange={setConversationForm}
           onSubmit={handleCreateConversation}
+          runnableAgents={runnableAgents}
         />
         <MessageForm
           conversation={conversation}
@@ -256,31 +265,46 @@ export function ChatRunsWorkspace() {
 }
 
 function ConversationForm({
+  agentsLoading,
   conversation,
   form,
   isSubmitting,
   onChange,
   onSubmit,
+  runnableAgents,
 }: {
+  agentsLoading: boolean;
   conversation: Conversation | null;
   form: ConversationFormState;
   isSubmitting: boolean;
   onChange: (form: ConversationFormState) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  runnableAgents: Agent[];
 }) {
   return (
     <form className="panel form-panel" onSubmit={onSubmit}>
       <p className="panel__eyebrow">Step 1</p>
       <h2>Create conversation</h2>
       <label className="form-field">
-        Agent ID
-        <input
+        Agent
+        <select
           name="agentId"
           onChange={(event) => onChange({ ...form, agentId: event.target.value })}
           required
           value={form.agentId}
-        />
+        >
+          <option value="">Select a published agent</option>
+          {runnableAgents.map((agent) => (
+            <option key={agent.id} value={agent.id}>
+              {formatAgentOption(agent)}
+            </option>
+          ))}
+        </select>
       </label>
+      {agentsLoading ? <p className="muted">Loading published agents...</p> : null}
+      {!agentsLoading && runnableAgents.length === 0 ? (
+        <p className="muted">No published agents are available. Publish an agent before running chat.</p>
+      ) : null}
       <label className="form-field">
         Title
         <input
@@ -626,6 +650,16 @@ function createIdempotencyKey(prefix: string): string {
       : Math.random().toString(36).slice(2);
 
   return `${prefix}-${randomValue}`;
+}
+
+function getRunnableAgents(agents: Agent[]): Agent[] {
+  return agents.filter(
+    (agent) => agent.status === "published" && agent.latest_version_number > 0,
+  );
+}
+
+function formatAgentOption(agent: Agent): string {
+  return `${agent.name} · v${agent.latest_version_number}`;
 }
 
 function mergeRunEvents(...eventGroups: RunEvent[][]): RunEvent[] {

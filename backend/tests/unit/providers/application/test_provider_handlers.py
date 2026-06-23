@@ -28,6 +28,10 @@ from hify.modules.providers.application.queries.get_model import (
     ModelCatalogService,
     ModelPricingCatalogService,
 )
+from hify.modules.providers.application.queries.list_models import (
+    ListModelsForActorHandler,
+    ListModelsForActorQuery,
+)
 from hify.modules.providers.domain.entities import ModelProvider, ProviderCredential, ProviderModel
 from hify.modules.providers.domain.errors import (
     ProviderAlreadyExistsError,
@@ -243,13 +247,61 @@ async def test_add_provider_model_and_catalog_queries() -> None:
         )
     )
 
-    catalog = ModelCatalogService(GetModelHandler(lambda: unit_of_work), ListModelsHandler(lambda: unit_of_work))
+    catalog = ModelCatalogService(
+        GetModelHandler(lambda: unit_of_work), ListModelsHandler(lambda: unit_of_work)
+    )
     fetched = await catalog.get_model(team_id=actor.team_id, model_id=model.id)
     listed = await catalog.list_models(team_id=actor.team_id)
     assert fetched.model_name == "gpt-4.1"
     assert fetched.price_per_1m_input_tokens is None
     assert fetched.price_per_1m_output_tokens is None
     assert listed == (fetched,)
+
+
+@pytest.mark.asyncio
+async def test_list_models_for_actor_returns_team_models_and_requires_permission() -> None:
+    unit_of_work = FakeProvidersUnitOfWork()
+    actor = actor_with_provider_permission()
+    provider = await CreateProviderHandler(
+        lambda: unit_of_work,
+        FakeCredentialEncryptor(),
+        FixedClock(),
+    ).handle(
+        CreateProviderCommand(
+            actor=actor,
+            provider_type="openai",
+            name="OpenAI",
+            base_url=None,
+            credential_plaintext="secret",
+        )
+    )
+    model = await AddProviderModelHandler(lambda: unit_of_work, FixedClock()).handle(
+        AddProviderModelCommand(
+            actor=actor,
+            provider_id=provider.id,
+            model_name="gpt-4.1",
+            display_name="GPT 4.1",
+            kind="chat",
+            context_window_tokens=128000,
+            supports_tools=True,
+            supports_vision=True,
+            supports_structured_output=True,
+        )
+    )
+    handler = ListModelsForActorHandler(lambda: unit_of_work)
+
+    listed = await handler.handle(ListModelsForActorQuery(actor=actor))
+
+    assert tuple(item.id for item in listed) == (model.id,)
+    viewer = ActorContext(
+        user_id=actor.user_id,
+        team_id=actor.team_id,
+        membership_id=actor.membership_id,
+        role="viewer",
+        permissions=(),
+    )
+    with pytest.raises(ProviderPermissionDeniedError):
+        await handler.handle(ListModelsForActorQuery(actor=viewer))
 
 
 @pytest.mark.asyncio

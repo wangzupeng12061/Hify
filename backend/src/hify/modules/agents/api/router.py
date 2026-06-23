@@ -6,10 +6,17 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from hify.modules.agents.api.dependencies import RequestAuthenticator
 from hify.modules.agents.api.schemas import AgentResponse, AgentVersionResponse, CreateAgentRequest
-from hify.modules.agents.application.commands.create_agent import CreateAgentCommand, CreateAgentHandler
+from hify.modules.agents.application.commands.create_agent import (
+    CreateAgentCommand,
+    CreateAgentHandler,
+)
 from hify.modules.agents.application.commands.publish_agent import (
     PublishAgentCommand,
     PublishAgentHandler,
+)
+from hify.modules.agents.application.queries.list_agents import (
+    ListAgentsForActorHandler,
+    ListAgentsForActorQuery,
 )
 from hify.modules.identity.contracts.dto import ActorContext
 from hify.shared.domain.errors import ConflictError, HifyError, NotFoundError, PermissionDeniedError
@@ -19,6 +26,7 @@ def create_agents_router(
     *,
     create_agent_handler: CreateAgentHandler,
     publish_agent_handler: PublishAgentHandler,
+    list_agents_handler: ListAgentsForActorHandler,
     request_authenticator: RequestAuthenticator,
 ) -> APIRouter:
     router = APIRouter(prefix="/agents", tags=["agents"])
@@ -26,6 +34,16 @@ def create_agents_router(
     async def get_current_actor(request: Request) -> ActorContext:
         try:
             return await request_authenticator.authenticate(request)
+        except HifyError as exc:
+            raise _to_http_error(exc) from exc
+
+    @router.get("", response_model=tuple[AgentResponse, ...])
+    async def list_agents(
+        actor: ActorContext = Depends(get_current_actor),
+    ) -> tuple[AgentResponse, ...]:
+        try:
+            agents = await list_agents_handler.handle(ListAgentsForActorQuery(actor=actor))
+            return tuple(AgentResponse.model_validate(agent) for agent in agents)
         except HifyError as exc:
             raise _to_http_error(exc) from exc
 

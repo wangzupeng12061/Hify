@@ -19,13 +19,17 @@ from hify.modules.providers.application.queries.get_model import (
     ModelCatalogService,
     ModelPricingCatalogService,
 )
+from hify.modules.providers.application.queries.list_models import ListModelsForActorHandler
 from hify.modules.providers.contracts.services import (
     EmbeddingGateway,
     ModelCatalog,
     ModelGateway,
     ModelPricingCatalog,
 )
-from hify.modules.providers.infrastructure.adapters.fake import MissingEmbeddingGateway, MissingModelGateway
+from hify.modules.providers.infrastructure.adapters.fake import (
+    MissingEmbeddingGateway,
+    MissingModelGateway,
+)
 from hify.modules.providers.infrastructure.database.uow import SqlAlchemyProvidersUnitOfWork
 from hify.modules.providers.infrastructure.encryption import (
     FernetCredentialEncryptor,
@@ -72,6 +76,7 @@ def create_providers_module(
     )
     get_model_handler = GetModelHandler(unit_of_work_factory)
     list_models_handler = ListModelsHandler(unit_of_work_factory)
+    list_models_for_actor_handler = ListModelsForActorHandler(unit_of_work_factory)
     get_model_pricing_handler = GetModelPricingHandler(unit_of_work_factory)
     model_catalog = ModelCatalogService(get_model_handler, list_models_handler)
     model_pricing_catalog = ModelPricingCatalogService(get_model_pricing_handler)
@@ -82,6 +87,7 @@ def create_providers_module(
         create_provider_handler=create_provider_handler,
         add_provider_model_handler=add_provider_model_handler,
         set_provider_model_pricing_handler=set_provider_model_pricing_handler,
+        list_models_handler=list_models_for_actor_handler,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),
     )
     return ProvidersModule(

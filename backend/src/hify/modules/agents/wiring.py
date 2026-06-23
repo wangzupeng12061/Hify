@@ -14,6 +14,7 @@ from hify.modules.agents.application.queries.get_agent_version import (
     GetAgentVersionHandler,
     GetLatestPublishedAgentVersionHandler,
 )
+from hify.modules.agents.application.queries.list_agents import ListAgentsForActorHandler
 from hify.modules.agents.contracts.services import AgentCatalog
 from hify.modules.agents.infrastructure.database.uow import SqlAlchemyAgentsUnitOfWork
 from hify.modules.knowledge.contracts.services import KnowledgeBaseCatalog
@@ -54,6 +55,7 @@ def create_agents_module(
         workflow_catalog,
         module_clock,
     )
+    list_agents_handler = ListAgentsForActorHandler(unit_of_work_factory)
     get_agent_version_handler = GetAgentVersionHandler(unit_of_work_factory)
     get_latest_published_agent_version_handler = GetLatestPublishedAgentVersionHandler(
         unit_of_work_factory
@@ -65,6 +67,7 @@ def create_agents_module(
     router = create_agents_router(
         create_agent_handler=create_agent_handler,
         publish_agent_handler=publish_agent_handler,
+        list_agents_handler=list_agents_handler,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),
     )
     return AgentsModule(router=router, agent_catalog=agent_catalog)

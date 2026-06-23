@@ -2,6 +2,8 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 
+import { useKnowledgeBases, type KnowledgeBase } from "@/features/knowledge";
+import { useProviderModels, type Model } from "@/features/providers";
 import { useWorkflows, type Workflow } from "@/features/workflows";
 import { HifyApiError } from "@/lib/api/errors";
 
@@ -10,7 +12,7 @@ import type { Agent, AgentVersion } from "../types";
 
 type AgentFormState = {
   description: string;
-  knowledgeBaseIds: string;
+  knowledgeBaseIds: string[];
   name: string;
   providerModelId: string;
   systemPrompt: string;
@@ -23,7 +25,7 @@ type PublishFormState = {
 
 const initialAgentForm: AgentFormState = {
   description: "",
-  knowledgeBaseIds: "",
+  knowledgeBaseIds: [],
   name: "",
   providerModelId: "",
   systemPrompt: "You are a helpful internal team assistant.",
@@ -34,17 +36,33 @@ const initialPublishForm: PublishFormState = {
   agentId: "",
 };
 
+const EMPTY_KNOWLEDGE_BASES: KnowledgeBase[] = [];
+const EMPTY_PROVIDER_MODELS: Model[] = [];
 const EMPTY_WORKFLOWS: Workflow[] = [];
 
 export function AgentsManagement() {
   const createAgentMutation = useCreateAgent();
   const publishAgentMutation = usePublishAgent();
+  const knowledgeBasesQuery = useKnowledgeBases();
+  const providerModelsQuery = useProviderModels();
   const workflowsQuery = useWorkflows();
   const [agentForm, setAgentForm] = useState(initialAgentForm);
   const [publishForm, setPublishForm] = useState(initialPublishForm);
   const [formError, setFormError] = useState<string | null>(null);
+  const knowledgeBases = knowledgeBasesQuery.data ?? EMPTY_KNOWLEDGE_BASES;
+  const providerModels = providerModelsQuery.data ?? EMPTY_PROVIDER_MODELS;
+  const activeChatModels = useMemo(() => getActiveChatModels(providerModels), [providerModels]);
+  const activeKnowledgeBases = useMemo(
+    () => getActiveKnowledgeBases(knowledgeBases),
+    [knowledgeBases],
+  );
   const workflows = workflowsQuery.data ?? EMPTY_WORKFLOWS;
   const publishedWorkflows = useMemo(() => getPublishedWorkflows(workflows), [workflows]);
+  const selectedModel =
+    activeChatModels.find((model) => model.id === agentForm.providerModelId) ?? null;
+  const selectedKnowledgeBases = activeKnowledgeBases.filter((knowledgeBase) =>
+    agentForm.knowledgeBaseIds.includes(knowledgeBase.id),
+  );
   const selectedWorkflow =
     publishedWorkflows.find((workflow) => workflow.id === agentForm.workflowId) ?? null;
 
@@ -53,14 +71,15 @@ export function AgentsManagement() {
     setFormError(null);
 
     try {
-      await createAgentMutation.mutateAsync({
+      const agent = await createAgentMutation.mutateAsync({
         description: agentForm.description.trim() || null,
-        knowledge_base_ids: parseCommaSeparatedIds(agentForm.knowledgeBaseIds),
+        knowledge_base_ids: agentForm.knowledgeBaseIds,
         name: agentForm.name.trim(),
         provider_model_id: agentForm.providerModelId.trim(),
         system_prompt: agentForm.systemPrompt.trim(),
         workflow_id: agentForm.workflowId.trim() || null,
       });
+      setPublishForm({ agentId: agent.id });
     } catch (error) {
       if (!(error instanceof HifyApiError)) {
         setFormError(error instanceof Error ? error.message : "Unable to create agent.");
@@ -82,7 +101,11 @@ export function AgentsManagement() {
   }
 
   const operationError =
-    workflowsQuery.error ?? createAgentMutation.error ?? publishAgentMutation.error;
+    providerModelsQuery.error ??
+    knowledgeBasesQuery.error ??
+    workflowsQuery.error ??
+    createAgentMutation.error ??
+    publishAgentMutation.error;
   const isSubmitting = createAgentMutation.isPending || publishAgentMutation.isPending;
 
   return (
@@ -102,12 +125,18 @@ export function AgentsManagement() {
       <section className="provider-layout">
         <CreateAgentForm
           agent={createAgentMutation.data}
+          activeKnowledgeBases={activeKnowledgeBases}
+          activeChatModels={activeChatModels}
           form={agentForm}
           isSubmitting={createAgentMutation.isPending}
+          knowledgeBasesLoading={knowledgeBasesQuery.isLoading}
           onChange={setAgentForm}
           onSubmit={handleCreateAgent}
           publishedWorkflows={publishedWorkflows}
+          selectedKnowledgeBases={selectedKnowledgeBases}
+          selectedModel={selectedModel}
           selectedWorkflow={selectedWorkflow}
+          providerModelsLoading={providerModelsQuery.isLoading}
           workflowsLoading={workflowsQuery.isLoading}
         />
         <PublishAgentForm
@@ -122,6 +151,8 @@ export function AgentsManagement() {
       <AgentSummary
         agent={createAgentMutation.data}
         isSubmitting={isSubmitting}
+        selectedKnowledgeBases={selectedKnowledgeBases}
+        selectedModel={selectedModel}
         selectedWorkflow={selectedWorkflow}
         version={publishAgentMutation.data}
       />
@@ -131,21 +162,33 @@ export function AgentsManagement() {
 
 function CreateAgentForm({
   agent,
+  activeKnowledgeBases,
+  activeChatModels,
   form,
   isSubmitting,
+  knowledgeBasesLoading,
   onChange,
   onSubmit,
   publishedWorkflows,
+  selectedKnowledgeBases,
+  selectedModel,
   selectedWorkflow,
+  providerModelsLoading,
   workflowsLoading,
 }: {
   agent?: Agent;
+  activeKnowledgeBases: KnowledgeBase[];
+  activeChatModels: Model[];
   form: AgentFormState;
   isSubmitting: boolean;
+  knowledgeBasesLoading: boolean;
   onChange: (form: AgentFormState) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   publishedWorkflows: Workflow[];
+  selectedKnowledgeBases: KnowledgeBase[];
+  selectedModel: Model | null;
   selectedWorkflow: Workflow | null;
+  providerModelsLoading: boolean;
   workflowsLoading: boolean;
 }) {
   return (
@@ -171,23 +214,60 @@ function CreateAgentForm({
         />
       </label>
       <label className="form-field">
-        Provider model ID
-        <input
+        Provider model
+        <select
           name="providerModelId"
           onChange={(event) => onChange({ ...form, providerModelId: event.target.value })}
           required
           value={form.providerModelId}
-        />
+        >
+          <option value="">Select a chat model</option>
+          {activeChatModels.map((model) => (
+            <option key={model.id} value={model.id}>
+              {formatModelOption(model)}
+            </option>
+          ))}
+        </select>
       </label>
-      <label className="form-field">
-        Knowledge base IDs
-        <input
-          name="knowledgeBaseIds"
-          onChange={(event) => onChange({ ...form, knowledgeBaseIds: event.target.value })}
-          placeholder="Optional, comma-separated"
-          value={form.knowledgeBaseIds}
+      {providerModelsLoading ? <p className="muted">Loading provider models...</p> : null}
+      {!providerModelsLoading && activeChatModels.length === 0 ? (
+        <p className="muted">No active chat models are available. Add one in Providers first.</p>
+      ) : null}
+      {selectedModel ? <ResultLine label="Selected model ID" value={selectedModel.id} /> : null}
+      <fieldset className="form-field">
+        <legend>Knowledge bases</legend>
+        {activeKnowledgeBases.map((knowledgeBase) => (
+          <label key={knowledgeBase.id}>
+            <input
+              checked={form.knowledgeBaseIds.includes(knowledgeBase.id)}
+              name="knowledgeBaseIds"
+              onChange={(event) =>
+                onChange({
+                  ...form,
+                  knowledgeBaseIds: toggleId(
+                    form.knowledgeBaseIds,
+                    knowledgeBase.id,
+                    event.target.checked,
+                  ),
+                })
+              }
+              type="checkbox"
+              value={knowledgeBase.id}
+            />{" "}
+            {knowledgeBase.name}
+          </label>
+        ))}
+      </fieldset>
+      {knowledgeBasesLoading ? <p className="muted">Loading knowledge bases...</p> : null}
+      {!knowledgeBasesLoading && activeKnowledgeBases.length === 0 ? (
+        <p className="muted">No active knowledge bases are available. This agent can run without RAG.</p>
+      ) : null}
+      {selectedKnowledgeBases.length > 0 ? (
+        <ResultLine
+          label="Selected knowledge bases"
+          value={selectedKnowledgeBases.map((knowledgeBase) => knowledgeBase.name).join(", ")}
         />
-      </label>
+      ) : null}
       <label className="form-field">
         Workflow
         <select
@@ -272,11 +352,15 @@ function PublishAgentForm({
 function AgentSummary({
   agent,
   isSubmitting,
+  selectedKnowledgeBases,
+  selectedModel,
   selectedWorkflow,
   version,
 }: {
   agent?: Agent;
   isSubmitting: boolean;
+  selectedKnowledgeBases: KnowledgeBase[];
+  selectedModel: Model | null;
   selectedWorkflow: Workflow | null;
   version?: AgentVersion;
 }) {
@@ -284,7 +368,19 @@ function AgentSummary({
     () => [
       { label: "Latest agent", value: agent?.name ?? "Not created in this session" },
       { label: "Latest agent ID", value: agent?.id ?? "Not available" },
-      { label: "Provider model ID", value: agent?.provider_model_id ?? "Not available" },
+      {
+        label: "Provider model",
+        value:
+          selectedModel?.display_name ??
+          (agent?.provider_model_id ? `Model ${agent.provider_model_id}` : "Not available"),
+      },
+      {
+        label: "Knowledge bases",
+        value:
+          selectedKnowledgeBases.length > 0
+            ? selectedKnowledgeBases.map((knowledgeBase) => knowledgeBase.name).join(", ")
+            : "No RAG binding",
+      },
       {
         label: "Configured workflow",
         value:
@@ -301,7 +397,7 @@ function AgentSummary({
       { label: "Latest version", value: version ? `${version.version_number}` : "Not published" },
       { label: "Operation status", value: isSubmitting ? "Submitting" : "Ready" },
     ],
-    [agent, isSubmitting, selectedWorkflow, version],
+    [agent, isSubmitting, selectedKnowledgeBases, selectedModel, selectedWorkflow, version],
   );
 
   return (
@@ -354,17 +450,30 @@ function ResultField({ label, value }: { label: string; value: string }) {
   );
 }
 
-function parseCommaSeparatedIds(value: string): string[] {
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-}
-
 function getPublishedWorkflows(workflows: Workflow[]): Workflow[] {
   return workflows.filter(
     (workflow) => workflow.status === "published" && workflow.latest_version_number > 0,
   );
+}
+
+function getActiveChatModels(models: Model[]): Model[] {
+  return models.filter((model) => model.kind === "chat" && model.status === "active");
+}
+
+function getActiveKnowledgeBases(knowledgeBases: KnowledgeBase[]): KnowledgeBase[] {
+  return knowledgeBases.filter((knowledgeBase) => knowledgeBase.status === "active");
+}
+
+function toggleId(ids: string[], id: string, isSelected: boolean): string[] {
+  if (isSelected) {
+    return ids.includes(id) ? ids : [...ids, id];
+  }
+
+  return ids.filter((currentId) => currentId !== id);
+}
+
+function formatModelOption(model: Model): string {
+  return `${model.provider_name} · ${model.display_name}`;
 }
 
 function formatWorkflowOption(workflow: Workflow): string {

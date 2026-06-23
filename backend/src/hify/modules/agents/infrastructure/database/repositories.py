@@ -39,6 +39,15 @@ class SqlAlchemyAgentRepository:
             return None
         return _agent_from_model(model)
 
+    async def list_by_team(self, *, team_id: UUID) -> tuple[Agent, ...]:
+        statement = (
+            select(AgentModel)
+            .where(AgentModel.team_id == team_id)
+            .order_by(AgentModel.status.asc(), AgentModel.created_at.desc(), AgentModel.id.desc())
+        )
+        models = await self._session.scalars(statement)
+        return tuple(_agent_from_model(model) for model in models)
+
     async def get_by_team_and_name(self, *, team_id: UUID, name: str) -> Agent | None:
         statement = select(AgentModel).where(
             AgentModel.team_id == team_id,

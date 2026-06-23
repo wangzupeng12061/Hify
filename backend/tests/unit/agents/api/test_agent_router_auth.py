@@ -20,6 +20,7 @@ def test_agent_routes_require_configured_authentication() -> None:
         create_agents_router(
             create_agent_handler=UnusedHandler(),
             publish_agent_handler=UnusedHandler(),
+            list_agents_handler=UnusedHandler(),
             request_authenticator=AuthenticationNotConfiguredAuthenticator(),
         )
     )
@@ -37,3 +38,7 @@ def test_agent_routes_require_configured_authentication() -> None:
 
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "AUTHENTICATION_NOT_CONFIGURED"
+
+    list_response = client.get("/agents")
+    assert list_response.status_code == 401
+    assert list_response.json()["detail"]["code"] == "AUTHENTICATION_NOT_CONFIGURED"

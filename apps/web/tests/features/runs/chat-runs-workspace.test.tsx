@@ -39,6 +39,14 @@ vi.mock("@/features/conversations", () => ({
   }),
 }));
 
+vi.mock("@/features/agents", () => ({
+  useAgents: () => ({
+    data: [createAgentResponse()],
+    error: null,
+    isLoading: false,
+  }),
+}));
+
 vi.mock("@/features/runs", () => ({
   useCancelRun: () => ({
     error: null,
@@ -94,7 +102,7 @@ describe("ChatRunsWorkspace", () => {
 
     render(<ChatRunsWorkspace />);
 
-    fireEvent.change(screen.getByLabelText("Agent ID"), {
+    fireEvent.change(screen.getByLabelText("Agent"), {
       target: { value: "agent-1" },
     });
     fireEvent.change(screen.getByLabelText("Title"), {
@@ -254,12 +262,28 @@ describe("ChatRunsWorkspace", () => {
 });
 
 async function createConversation() {
-  fireEvent.change(screen.getByLabelText("Agent ID"), {
+  fireEvent.change(screen.getByLabelText("Agent"), {
     target: { value: "agent-1" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Create conversation" }));
 
   await waitFor(() => expect(hookMocks.createConversation).toHaveBeenCalledTimes(1));
+}
+
+function createAgentResponse() {
+  return {
+    created_at: "2026-06-23T00:00:00Z",
+    description: "Support assistant",
+    id: "agent-1",
+    knowledge_base_ids: [],
+    latest_version_number: 1,
+    name: "Support Agent",
+    provider_model_id: "model-1",
+    status: "published",
+    team_id: "team-1",
+    updated_at: "2026-06-23T00:00:00Z",
+    workflow_id: null,
+  };
 }
 
 function createConversationResponse() {
