@@ -7,6 +7,7 @@ const NAVIGATION_ITEMS = [
   { href: "/", label: "Identity" },
   { href: "/providers", label: "Providers" },
   { href: "/agents", label: "Agents" },
+  { href: "/workflows", label: "Workflows" },
   { href: "/conversations", label: "Conversations" },
   { href: "/runs", label: "Runs" },
   { href: "/knowledge", label: "Knowledge" },

@@ -20,6 +20,9 @@ from hify.modules.workflows.application.queries.get_workflow import (
     GetWorkflowVersionHandler,
     WorkflowCatalogService,
 )
+from hify.modules.workflows.application.queries.list_workflows import (
+    ListWorkflowsForActorHandler,
+)
 from hify.modules.workflows.application.queries.validate_workflow import (
     ValidateWorkflowDraftHandler,
 )
@@ -58,6 +61,7 @@ def create_workflows_module(
         module_clock,
     )
     get_workflow_handler = GetWorkflowForActorHandler(unit_of_work_factory)
+    list_workflows_handler = ListWorkflowsForActorHandler(unit_of_work_factory)
     validate_workflow_draft_handler = ValidateWorkflowDraftHandler(
         unit_of_work_factory,
         model_catalog,
@@ -76,6 +80,7 @@ def create_workflows_module(
         update_workflow_draft_handler=update_workflow_draft_handler,
         publish_workflow_handler=publish_workflow_handler,
         get_workflow_handler=get_workflow_handler,
+        list_workflows_handler=list_workflows_handler,
         validate_workflow_draft_handler=validate_workflow_draft_handler,
         request_authenticator=AuthenticationNotConfiguredAuthenticator(),
     )

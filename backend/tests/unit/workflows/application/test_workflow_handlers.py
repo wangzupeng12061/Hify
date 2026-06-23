@@ -29,6 +29,10 @@ from hify.modules.workflows.application.queries.get_workflow import (
     GetWorkflowVersionHandler,
     WorkflowCatalogService,
 )
+from hify.modules.workflows.application.queries.list_workflows import (
+    ListWorkflowsForActorHandler,
+    ListWorkflowsForActorQuery,
+)
 from hify.modules.workflows.application.queries.validate_workflow import (
     ValidateWorkflowDraftHandler,
     ValidateWorkflowDraftQuery,
@@ -98,6 +102,15 @@ class FakeWorkflowRepository:
                 return workflow
         return None
 
+    async def list_by_team(self, *, team_id: UUID) -> tuple[Workflow, ...]:
+        return tuple(
+            sorted(
+                (workflow for workflow in self.items.values() if workflow.team_id == team_id),
+                key=lambda workflow: (workflow.status.value, workflow.created_at, workflow.id),
+                reverse=True,
+            )
+        )
+
 
 class FakeWorkflowVersionRepository:
     def __init__(self) -> None:
@@ -110,7 +123,9 @@ class FakeWorkflowVersionRepository:
         return self.items.get(workflow_version_id)
 
     async def get_latest_by_workflow_id(self, workflow_id: UUID) -> WorkflowVersion | None:
-        versions = [version for version in self.items.values() if version.workflow_id == workflow_id]
+        versions = [
+            version for version in self.items.values() if version.workflow_id == workflow_id
+        ]
         if not versions:
             return None
         return max(versions, key=lambda version: version.version_number)
@@ -287,11 +302,15 @@ async def test_workflow_handlers_update_validate_publish_and_catalog_read_versio
     read_workflow = await GetWorkflowForActorHandler(lambda: unit_of_work).handle(
         GetWorkflowForActorQuery(actor=actor, workflow_id=workflow.id)
     )
+    listed_workflows = await ListWorkflowsForActorHandler(lambda: unit_of_work).handle(
+        ListWorkflowsForActorQuery(actor=actor)
+    )
 
     assert validation.is_valid
     assert workflow_version.version_number == 1
     assert latest == fetched == workflow_version
     assert read_workflow.latest_version_number == 1
+    assert listed_workflows == (read_workflow,)
     assert model_catalog.requests == [model_catalog.model.id, model_catalog.model.id]
     assert tool_catalog.requests == [tool_catalog.tool.id, tool_catalog.tool.id]
 
