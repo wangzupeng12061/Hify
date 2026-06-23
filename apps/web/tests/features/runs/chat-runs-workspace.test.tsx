@@ -10,6 +10,8 @@ const hookMocks = vi.hoisted(() => ({
   createRun: vi.fn(),
   refetchRun: vi.fn(),
   refetchRunEvents: vi.fn(),
+  startRunStream: vi.fn(),
+  stopRunStream: vi.fn(),
 }));
 
 vi.mock("@/features/conversations", () => ({
@@ -60,6 +62,13 @@ vi.mock("@/features/runs", () => ({
     error: null,
     isFetching: false,
     refetch: hookMocks.refetchRunEvents,
+  }),
+  useRunStream: () => ({
+    error: null,
+    isStreaming: false,
+    start: hookMocks.startRunStream,
+    status: "idle",
+    stop: hookMocks.stopRunStream,
   }),
 }));
 
@@ -131,11 +140,59 @@ describe("ChatRunsWorkspace", () => {
       conversation_id: "conversation-1",
       idempotency_key: "run-key",
     });
+    expect(hookMocks.startRunStream).toHaveBeenCalledWith({
+      onEvent: expect.any(Function),
+      runId: "run-1",
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel run" }));
 
     await waitFor(() => expect(hookMocks.cancelRun).toHaveBeenCalledTimes(1));
     expect(hookMocks.cancelRun).toHaveBeenCalledWith({ runId: "run-1" });
+    expect(hookMocks.stopRunStream).toHaveBeenCalled();
+  });
+
+  it("renders streamed assistant output after starting a run", async () => {
+    hookMocks.createConversation.mockResolvedValueOnce(createConversationResponse());
+    hookMocks.createRun.mockResolvedValueOnce(createRunResponse());
+    hookMocks.startRunStream.mockImplementationOnce(({ onEvent }) => {
+      onEvent(
+        createRunEventResponse({
+          event_type: "run.started",
+          sequence_number: 2,
+        }),
+      );
+      onEvent(
+        createRunEventResponse({
+          event_type: "output.text_delta",
+          payload: { text: "Hello" },
+          sequence_number: 3,
+        }),
+      );
+      onEvent(
+        createRunEventResponse({
+          event_type: "output.text_delta",
+          payload: { text: " team" },
+          sequence_number: 4,
+        }),
+      );
+      onEvent(
+        createRunEventResponse({
+          event_type: "run.succeeded",
+          sequence_number: 5,
+        }),
+      );
+
+      return Promise.resolve();
+    });
+
+    render(<ChatRunsWorkspace />);
+    await createConversation();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+
+    await waitFor(() => expect(screen.getByText("Hello team")).toBeTruthy());
+    expect(screen.getByText("succeeded")).toBeTruthy();
   });
 });
 
@@ -191,6 +248,21 @@ function createRunResponse(override: Record<string, unknown> = {}) {
     step_count: 0,
     team_id: "team-1",
     updated_at: "2026-06-23T00:00:00Z",
+    ...override,
+  };
+}
+
+function createRunEventResponse(override: Record<string, unknown> = {}) {
+  return {
+    created_at: "2026-06-23T00:00:00Z",
+    event_type: "run.created",
+    id: `event-${override.sequence_number ?? 1}`,
+    payload: {
+      run_id: "run-1",
+    },
+    run_id: "run-1",
+    sequence_number: 1,
+    team_id: "team-1",
     ...override,
   };
 }

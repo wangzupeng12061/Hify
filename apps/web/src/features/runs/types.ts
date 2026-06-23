@@ -13,3 +13,9 @@ export type ListRunEventsInput = RunIdInput & {
   cursor?: string | null;
   limit?: number;
 };
+
+export type ExecuteRunStreamInput = RunIdInput & {
+  fetch?: typeof fetch;
+  onEvent: (event: RunEvent) => void;
+  signal?: AbortSignal;
+};

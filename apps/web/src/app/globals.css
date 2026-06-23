@@ -277,6 +277,16 @@ select {
   opacity: 0.55;
 }
 
+.assistant-output {
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  line-height: 1.7;
+  min-height: 7rem;
+  padding: 1rem;
+  white-space: pre-wrap;
+}
+
 .timeline-list {
   display: grid;
   gap: 0.75rem;
