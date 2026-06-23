@@ -1,14 +1,15 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { renderHook } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useCreateAgent, usePublishAgent } from "@/features/agents";
+import { useAgents, useCreateAgent, usePublishAgent } from "@/features/agents";
 import type { Agent, AgentVersion } from "@/features/agents";
 import { hifyApiClient } from "@/lib/api/client";
 import { createHifyQueryClient } from "@/lib/query/query-client";
 
 const apiClientMock = vi.hoisted(() => ({
+  GET: vi.fn(),
   POST: vi.fn(),
 }));
 
@@ -56,6 +57,20 @@ describe("agent hooks", () => {
       },
     });
     expect(agent.id).toBe("agent-1");
+  });
+
+  it("lists agents from the backend contract", async () => {
+    apiClientMock.GET.mockResolvedValueOnce({
+      data: [createAgentResponse()],
+      response: new Response(null, { status: 200 }),
+    });
+
+    const { result } = renderHook(() => useAgents(), {
+      wrapper: createQueryWrapper(),
+    });
+
+    expect(hifyApiClient.GET).toHaveBeenCalledWith("/agents");
+    await waitFor(() => expect(result.current.data?.[0]?.id).toBe("agent-1"));
   });
 
   it("publishes agents with path params", async () => {

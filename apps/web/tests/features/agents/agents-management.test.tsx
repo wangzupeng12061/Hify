@@ -23,6 +23,22 @@ vi.mock("@/features/agents/hooks", () => ({
   }),
 }));
 
+vi.mock("@/features/knowledge", () => ({
+  useKnowledgeBases: () => ({
+    data: [createKnowledgeBaseResponse()],
+    error: null,
+    isLoading: false,
+  }),
+}));
+
+vi.mock("@/features/providers", () => ({
+  useProviderModels: () => ({
+    data: [createModelResponse()],
+    error: null,
+    isLoading: false,
+  }),
+}));
+
 vi.mock("@/features/workflows", () => ({
   useWorkflows: () => ({
     data: [createWorkflowResponse(), createDraftWorkflowResponse()],
@@ -38,7 +54,7 @@ describe("AgentsManagement", () => {
   });
 
   it("submits agent creation values with cleaned optional fields", async () => {
-    hookMocks.createAgent.mockResolvedValueOnce({});
+    hookMocks.createAgent.mockResolvedValueOnce(createAgentResponse());
     render(<AgentsManagement />);
 
     fireEvent.change(screen.getByLabelText("Agent name"), {
@@ -47,12 +63,10 @@ describe("AgentsManagement", () => {
     fireEvent.change(screen.getByLabelText("Description"), {
       target: { value: " Support assistant " },
     });
-    fireEvent.change(screen.getByLabelText("Provider model ID"), {
+    fireEvent.change(screen.getByLabelText("Provider model"), {
       target: { value: "model-1" },
     });
-    fireEvent.change(screen.getByLabelText("Knowledge base IDs"), {
-      target: { value: "kb-1, kb-2, " },
-    });
+    fireEvent.click(screen.getByLabelText("Team Docs"));
     fireEvent.change(screen.getByLabelText("Workflow"), {
       target: { value: "workflow-1" },
     });
@@ -64,7 +78,7 @@ describe("AgentsManagement", () => {
     await waitFor(() =>
       expect(hookMocks.createAgent).toHaveBeenCalledWith({
         description: "Support assistant",
-        knowledge_base_ids: ["kb-1", "kb-2"],
+        knowledge_base_ids: ["kb-1"],
         name: "Support Agent",
         provider_model_id: "model-1",
         system_prompt: "Help the team.",
@@ -114,6 +128,58 @@ function createWorkflowResponse() {
     status: "published",
     team_id: "team-1",
     updated_at: "2026-06-23T00:00:00Z",
+  };
+}
+
+function createAgentResponse() {
+  return {
+    created_at: "2026-06-23T00:00:00Z",
+    description: "Support assistant",
+    id: "agent-1",
+    knowledge_base_ids: ["kb-1"],
+    latest_version_number: 0,
+    name: "Support Agent",
+    provider_model_id: "model-1",
+    status: "draft",
+    team_id: "team-1",
+    updated_at: "2026-06-23T00:00:00Z",
+    workflow_id: "workflow-1",
+  };
+}
+
+function createKnowledgeBaseResponse() {
+  return {
+    chunk_count: 3,
+    created_at: "2026-06-23T00:00:00Z",
+    description: "Team documents",
+    document_count: 1,
+    embedding_dimensions: 1536,
+    embedding_model_id: "embedding-model-1",
+    id: "kb-1",
+    name: "Team Docs",
+    status: "active",
+    team_id: "team-1",
+    updated_at: "2026-06-23T00:00:00Z",
+  };
+}
+
+function createModelResponse() {
+  return {
+    context_window_tokens: 128000,
+    display_name: "GPT-4.1",
+    id: "model-1",
+    kind: "chat",
+    model_name: "gpt-4.1",
+    price_per_1m_input_tokens: null,
+    price_per_1m_output_tokens: null,
+    provider_id: "provider-1",
+    provider_name: "OpenAI",
+    provider_type: "openai",
+    status: "active",
+    supports_structured_output: true,
+    supports_tools: true,
+    supports_vision: false,
+    team_id: "team-1",
   };
 }
 

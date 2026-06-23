@@ -16,6 +16,10 @@ export async function createProvider(request: CreateProviderRequest): Promise<Pr
   );
 }
 
+export async function listProviderModels(): Promise<Model[]> {
+  return unwrapApiResponse(await hifyApiClient.GET("/providers/models"));
+}
+
 export async function addProviderModel(request: AddProviderModelInput): Promise<Model> {
   const { providerId, ...body } = request;
 

@@ -1,5 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { renderHook } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -8,11 +8,13 @@ import { createHifyQueryClient } from "@/lib/query/query-client";
 import {
   useAddProviderModel,
   useCreateProvider,
+  useProviderModels,
   useSetProviderModelPricing,
 } from "@/features/providers";
 import type { Model } from "@/features/providers";
 
 const apiClientMock = vi.hoisted(() => ({
+  GET: vi.fn(),
   POST: vi.fn(),
   PUT: vi.fn(),
 }));
@@ -64,6 +66,22 @@ describe("provider hooks", () => {
       },
     });
     expect(provider.id).toBe("provider-1");
+  });
+
+  it("lists provider models from the backend contract", async () => {
+    apiClientMock.GET.mockResolvedValueOnce({
+      data: [createModelResponse()],
+      response: new Response(null, { status: 200 }),
+    });
+
+    const { result } = renderHook(() => useProviderModels(), {
+      wrapper: createQueryWrapper(),
+    });
+
+    await waitFor(() => expect(apiClientMock.GET).toHaveBeenCalledTimes(1));
+
+    expect(hifyApiClient.GET).toHaveBeenCalledWith("/providers/models");
+    await waitFor(() => expect(result.current.data?.[0]?.id).toBe("model-1"));
   });
 
   it("adds provider models with path params", async () => {
