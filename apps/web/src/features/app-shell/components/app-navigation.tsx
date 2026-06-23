@@ -10,6 +10,7 @@ const NAVIGATION_ITEMS = [
   { href: "/conversations", label: "Conversations" },
   { href: "/runs", label: "Runs" },
   { href: "/knowledge", label: "Knowledge" },
+  { href: "/tools", label: "Tools" },
   { href: "#", label: "Usage" },
 ];
 
