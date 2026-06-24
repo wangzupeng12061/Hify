@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { addTeamMember, createTeam, createUser, getCurrentUser } from "./api";
+import { addTeamMember, createDevSession, createTeam, createUser, getCurrentUser, logout } from "./api";
 
 export const identityQueryKeys = {
   all: ["identity"] as const,
@@ -13,6 +13,28 @@ export function useCurrentUser() {
   return useQuery({
     queryFn: getCurrentUser,
     queryKey: identityQueryKeys.currentUser(),
+  });
+}
+
+export function useCreateDevSession() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: createDevSession,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: identityQueryKeys.currentUser() });
+    },
+  });
+}
+
+export function useLogout() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: logout,
+    onSuccess: async () => {
+      queryClient.removeQueries({ queryKey: identityQueryKeys.currentUser() });
+    },
   });
 }
 

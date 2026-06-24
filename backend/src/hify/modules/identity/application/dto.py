@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
+
+from hify.modules.identity.contracts.dto import ActorContext
 from hify.modules.identity.contracts.dto import MembershipProfile, TeamProfile, UserProfile
 from hify.modules.identity.domain.entities import Team, TeamMembership, User
 
@@ -35,3 +39,10 @@ def membership_profile_from_domain(membership: TeamMembership) -> MembershipProf
         created_at=membership.created_at,
         updated_at=membership.updated_at,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class AuthSessionResult:
+    token: str
+    actor: ActorContext
+    expires_at: datetime

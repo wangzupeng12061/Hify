@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from hify.modules.mcp.api.dependencies import AuthenticationNotConfiguredAuthenticator
+from hify.modules.mcp.api.dependencies import (
+    AuthenticationNotConfiguredAuthenticator,
+    RequestAuthenticator,
+)
 from hify.modules.mcp.api.router import create_mcp_router
 from hify.modules.mcp.application.commands.create_server import CreateMcpServerHandler
 from hify.modules.mcp.application.commands.refresh_tools import (
@@ -38,6 +41,7 @@ def create_mcp_module(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     clock: Clock | None = None,
+    request_authenticator: RequestAuthenticator | None = None,
 ) -> McpModule:
     module_clock = clock or SystemClock()
     mcp_client = UnavailableMcpClient()
@@ -64,7 +68,7 @@ def create_mcp_module(
         list_servers_handler=list_servers_handler,
         list_tools_handler=list_tools_handler,
         refresh_tools_handler=refresh_tools_handler,
-        request_authenticator=AuthenticationNotConfiguredAuthenticator(),
+        request_authenticator=request_authenticator or AuthenticationNotConfiguredAuthenticator(),
     )
     return McpModule(
         router=router,

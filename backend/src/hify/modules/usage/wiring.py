@@ -6,7 +6,10 @@ from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hify.modules.providers.contracts.services import ModelPricingCatalog
-from hify.modules.usage.api.dependencies import AuthenticationNotConfiguredAuthenticator
+from hify.modules.usage.api.dependencies import (
+    AuthenticationNotConfiguredAuthenticator,
+    RequestAuthenticator,
+)
 from hify.modules.usage.api.router import create_usage_router
 from hify.modules.usage.application.commands.record_model_usage import (
     RecordModelUsageHandler,
@@ -45,6 +48,7 @@ def create_usage_module(
     *,
     model_pricing_catalog: ModelPricingCatalog | None = None,
     clock: Clock | None = None,
+    request_authenticator: RequestAuthenticator | None = None,
 ) -> UsageModule:
     module_clock = clock or SystemClock()
 
@@ -74,7 +78,7 @@ def create_usage_module(
         get_cost_by_model_handler=get_cost_by_model_handler,
         get_cost_by_day_handler=get_cost_by_day_handler,
         set_quota_handler=set_quota_handler,
-        request_authenticator=AuthenticationNotConfiguredAuthenticator(),
+        request_authenticator=request_authenticator or AuthenticationNotConfiguredAuthenticator(),
     )
     return UsageModule(
         router=router,

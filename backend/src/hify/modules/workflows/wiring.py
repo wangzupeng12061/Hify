@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hify.modules.providers.contracts.services import ModelCatalog
 from hify.modules.tools.contracts.services import ToolCatalog
-from hify.modules.workflows.api.dependencies import AuthenticationNotConfiguredAuthenticator
+from hify.modules.workflows.api.dependencies import (
+    AuthenticationNotConfiguredAuthenticator,
+    RequestAuthenticator,
+)
 from hify.modules.workflows.api.router import create_workflows_router
 from hify.modules.workflows.application.commands.create_workflow import CreateWorkflowHandler
 from hify.modules.workflows.application.commands.publish_workflow import PublishWorkflowHandler
@@ -43,6 +46,7 @@ def create_workflows_module(
     model_catalog: ModelCatalog,
     tool_catalog: ToolCatalog,
     clock: Clock | None = None,
+    request_authenticator: RequestAuthenticator | None = None,
 ) -> WorkflowsModule:
     module_clock = clock or SystemClock()
 
@@ -82,6 +86,6 @@ def create_workflows_module(
         get_workflow_handler=get_workflow_handler,
         list_workflows_handler=list_workflows_handler,
         validate_workflow_draft_handler=validate_workflow_draft_handler,
-        request_authenticator=AuthenticationNotConfiguredAuthenticator(),
+        request_authenticator=request_authenticator or AuthenticationNotConfiguredAuthenticator(),
     )
     return WorkflowsModule(router=router, workflow_catalog=workflow_catalog)

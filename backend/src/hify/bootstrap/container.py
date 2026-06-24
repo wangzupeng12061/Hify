@@ -44,42 +44,63 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         echo=resolved_settings.database_echo,
     )
     session_factory = create_session_factory(engine)
-    identity = create_identity_module(session_factory)
+    identity = create_identity_module(
+        session_factory,
+        auth_cookie_name=resolved_settings.auth_cookie_name,
+        auth_cookie_secure=resolved_settings.auth_cookie_secure,
+        auth_cookie_samesite=resolved_settings.auth_cookie_samesite,
+        auth_session_ttl_seconds=resolved_settings.auth_session_ttl_seconds,
+        auth_dev_login_enabled=resolved_settings.auth_dev_login_enabled,
+        auth_oidc_enabled=resolved_settings.auth_oidc_enabled,
+    )
     providers = create_providers_module(
         session_factory,
         credential_encryption_key=resolved_settings.provider_credential_encryption_key,
         credential_key_version=resolved_settings.provider_credential_key_version,
+        request_authenticator=identity.request_authenticator,
     )
-    jobs = create_jobs_module(session_factory)
+    jobs = create_jobs_module(
+        session_factory,
+        request_authenticator=identity.request_authenticator,
+    )
     knowledge = create_knowledge_module(
         session_factory,
         model_catalog=providers.model_catalog,
         embedding_gateway=providers.embedding_gateway,
+        request_authenticator=identity.request_authenticator,
     )
-    mcp = create_mcp_module(session_factory)
+    mcp = create_mcp_module(
+        session_factory,
+        request_authenticator=identity.request_authenticator,
+    )
     tools = create_tools_module(
         session_factory,
         mcp_tool_discovery=mcp.mcp_tool_discovery,
         mcp_tool_invoker=mcp.mcp_tool_invoker,
+        request_authenticator=identity.request_authenticator,
     )
     workflows = create_workflows_module(
         session_factory,
         model_catalog=providers.model_catalog,
         tool_catalog=tools.tool_catalog,
+        request_authenticator=identity.request_authenticator,
     )
     agents = create_agents_module(
         session_factory,
         model_catalog=providers.model_catalog,
         knowledge_base_catalog=knowledge.knowledge_base_catalog,
         workflow_catalog=workflows.workflow_catalog,
+        request_authenticator=identity.request_authenticator,
     )
     conversations = create_conversations_module(
         session_factory,
         agent_catalog=agents.agent_catalog,
+        request_authenticator=identity.request_authenticator,
     )
     usage = create_usage_module(
         session_factory,
         model_pricing_catalog=providers.model_pricing_catalog,
+        request_authenticator=identity.request_authenticator,
     )
     runs = create_runs_module(
         session_factory,
@@ -92,6 +113,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         usage_recorder=usage.usage_recorder,
         usage_reader=usage.usage_reader,
         usage_quota_checker=usage.usage_quota_checker,
+        request_authenticator=identity.request_authenticator,
     )
     return HifyContainer(
         settings=resolved_settings,

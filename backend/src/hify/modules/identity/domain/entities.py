@@ -6,6 +6,7 @@ from uuid import UUID
 
 from hify.shared.domain.ids import new_uuid
 
+from hify.modules.identity.domain.errors import IdentityValidationError
 from hify.modules.identity.domain.value_objects import (
     EmailAddress,
     IdentityPermission,
@@ -140,3 +141,99 @@ class TeamMembership:
     def _mark_updated(self, now: datetime) -> None:
         self.version += 1
         self.updated_at = now
+
+
+@dataclass(slots=True)
+class AuthSession:
+    id: UUID
+    user_id: UUID
+    team_id: UUID
+    session_token_hash: str
+    expires_at: datetime
+    revoked_at: datetime | None
+    last_seen_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        user_id: UUID,
+        team_id: UUID,
+        session_token_hash: str,
+        expires_at: datetime,
+        now: datetime,
+    ) -> AuthSession:
+        return cls(
+            id=new_uuid(),
+            user_id=user_id,
+            team_id=team_id,
+            session_token_hash=_validate_session_token_hash(session_token_hash),
+            expires_at=expires_at,
+            revoked_at=None,
+            last_seen_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def is_active(self, *, now: datetime) -> bool:
+        return self.revoked_at is None and self.expires_at > now
+
+    def mark_seen(self, *, now: datetime) -> None:
+        self.last_seen_at = now
+        self.updated_at = now
+
+    def revoke(self, *, now: datetime) -> None:
+        if self.revoked_at is not None:
+            return
+        self.revoked_at = now
+        self.updated_at = now
+
+
+@dataclass(slots=True)
+class ExternalAccount:
+    id: UUID
+    provider: str
+    subject: str
+    user_id: UUID
+    email: EmailAddress
+    display_name: str
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        provider: str,
+        subject: str,
+        user_id: UUID,
+        email: EmailAddress,
+        display_name: str,
+        now: datetime,
+    ) -> ExternalAccount:
+        return cls(
+            id=new_uuid(),
+            provider=_normalize_external_value(provider, field_name="provider"),
+            subject=_normalize_external_value(subject, field_name="subject"),
+            user_id=user_id,
+            email=email,
+            display_name=normalize_display_name(display_name),
+            created_at=now,
+            updated_at=now,
+        )
+
+
+def _validate_session_token_hash(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise IdentityValidationError("session token hash must not be blank")
+    return normalized
+
+
+def _normalize_external_value(value: str, *, field_name: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise IdentityValidationError(f"{field_name} must not be blank")
+    return normalized

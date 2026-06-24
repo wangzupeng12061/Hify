@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hify.modules.identity.domain.entities import Team, TeamMembership, User
+from hify.modules.identity.domain.entities import AuthSession, ExternalAccount, Team, TeamMembership, User
 from hify.modules.identity.domain.value_objects import (
     EmailAddress,
     MembershipStatus,
@@ -14,6 +14,8 @@ from hify.modules.identity.domain.value_objects import (
     UserStatus,
 )
 from hify.modules.identity.infrastructure.database.models import (
+    AuthSessionModel,
+    ExternalAccountModel,
     TeamMembershipModel,
     TeamModel,
     UserModel,
@@ -86,6 +88,54 @@ class SqlAlchemyMembershipRepository:
         return _membership_from_model(model)
 
 
+class SqlAlchemyAuthSessionRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, session: AuthSession) -> None:
+        self._session.add(_auth_session_to_model(session))
+
+    async def get_by_token_hash(self, session_token_hash: str) -> AuthSession | None:
+        statement = select(AuthSessionModel).where(
+            AuthSessionModel.session_token_hash == session_token_hash,
+        )
+        model = await self._session.scalar(statement)
+        if model is None:
+            return None
+        return _auth_session_from_model(model)
+
+    async def save(self, session: AuthSession) -> None:
+        model = await self._session.get(AuthSessionModel, session.id)
+        if model is None:
+            self._session.add(_auth_session_to_model(session))
+            return
+        model.revoked_at = session.revoked_at
+        model.last_seen_at = session.last_seen_at
+        model.updated_at = session.updated_at
+
+
+class SqlAlchemyExternalAccountRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, account: ExternalAccount) -> None:
+        self._session.add(_external_account_to_model(account))
+
+    async def get_by_provider_subject(
+        self,
+        *,
+        provider: str,
+        subject: str,
+    ) -> ExternalAccount | None:
+        statement = select(ExternalAccountModel).where(
+            ExternalAccountModel.provider == provider,
+            ExternalAccountModel.subject == subject,
+        )
+        model = await self._session.scalar(statement)
+        if model is None:
+            return None
+        return _external_account_from_model(model)
+
 def _user_to_model(user: User) -> UserModel:
     return UserModel(
         id=user.id,
@@ -153,6 +203,60 @@ def _membership_from_model(model: TeamMembershipModel) -> TeamMembership:
         role=TeamRole(model.role),
         status=MembershipStatus(model.status),
         version=model.version,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def _auth_session_to_model(session: AuthSession) -> AuthSessionModel:
+    return AuthSessionModel(
+        id=session.id,
+        user_id=session.user_id,
+        team_id=session.team_id,
+        session_token_hash=session.session_token_hash,
+        expires_at=session.expires_at,
+        revoked_at=session.revoked_at,
+        last_seen_at=session.last_seen_at,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+    )
+
+
+def _auth_session_from_model(model: AuthSessionModel) -> AuthSession:
+    return AuthSession(
+        id=model.id,
+        user_id=model.user_id,
+        team_id=model.team_id,
+        session_token_hash=model.session_token_hash,
+        expires_at=model.expires_at,
+        revoked_at=model.revoked_at,
+        last_seen_at=model.last_seen_at,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def _external_account_to_model(account: ExternalAccount) -> ExternalAccountModel:
+    return ExternalAccountModel(
+        id=account.id,
+        provider=account.provider,
+        subject=account.subject,
+        user_id=account.user_id,
+        email=account.email.value,
+        display_name=account.display_name,
+        created_at=account.created_at,
+        updated_at=account.updated_at,
+    )
+
+
+def _external_account_from_model(model: ExternalAccountModel) -> ExternalAccount:
+    return ExternalAccount(
+        id=model.id,
+        provider=model.provider,
+        subject=model.subject,
+        user_id=model.user_id,
+        email=EmailAddress.parse(model.email),
+        display_name=model.display_name,
         created_at=model.created_at,
         updated_at=model.updated_at,
     )

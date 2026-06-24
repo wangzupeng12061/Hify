@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
@@ -78,7 +76,7 @@ async def _redis_health_status(redis_url: str) -> str:
     if not redis_url:
         return "not_configured"
 
-    client: Redis[Any] = Redis.from_url(redis_url)
+    client = Redis.from_url(redis_url)
     try:
         await client.ping()
     except RedisError:

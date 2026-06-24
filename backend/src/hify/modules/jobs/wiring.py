@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from hify.modules.jobs.api.dependencies import AuthenticationNotConfiguredAuthenticator
+from hify.modules.jobs.api.dependencies import (
+    AuthenticationNotConfiguredAuthenticator,
+    RequestAuthenticator,
+)
 from hify.modules.jobs.api.router import create_jobs_router
 from hify.modules.jobs.application.commands.mark_job_failed import MarkJobFailedHandler
 from hify.modules.jobs.application.commands.mark_job_succeeded import MarkJobSucceededHandler
@@ -30,6 +33,7 @@ def create_jobs_module(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     clock: Clock | None = None,
+    request_authenticator: RequestAuthenticator | None = None,
 ) -> JobsModule:
     module_clock = clock or SystemClock()
 
@@ -50,7 +54,7 @@ def create_jobs_module(
     )
     router = create_jobs_router(
         get_job_handler=get_job_handler,
-        request_authenticator=AuthenticationNotConfiguredAuthenticator(),
+        request_authenticator=request_authenticator or AuthenticationNotConfiguredAuthenticator(),
     )
     return JobsModule(
         router=router,

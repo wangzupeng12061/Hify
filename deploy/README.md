@@ -45,9 +45,9 @@ not Kubernetes.
 
 ## Known Release Blockers
 
-- Business API routers still use the placeholder authenticator. A production
-  release must wire a real authenticator that resolves
-  `identity.contracts.ActorContext`.
+- Local verification uses `HIFY_AUTH_DEV_LOGIN_ENABLED=true`. Production must
+  disable developer login and finish the OIDC callback implementation before
+  exposing the app to users.
 - Object storage presigned upload configuration is not represented in settings
   yet. Keep RAG smoke tests to flows currently implemented by the backend until
   storage settings are added.

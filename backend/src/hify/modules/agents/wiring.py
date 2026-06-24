@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from hify.modules.agents.api.dependencies import AuthenticationNotConfiguredAuthenticator
+from hify.modules.agents.api.dependencies import (
+    AuthenticationNotConfiguredAuthenticator,
+    RequestAuthenticator,
+)
 from hify.modules.agents.api.router import create_agents_router
 from hify.modules.agents.application.commands.create_agent import CreateAgentHandler
 from hify.modules.agents.application.commands.publish_agent import PublishAgentHandler
@@ -36,6 +39,7 @@ def create_agents_module(
     knowledge_base_catalog: KnowledgeBaseCatalog,
     workflow_catalog: WorkflowCatalog,
     clock: Clock | None = None,
+    request_authenticator: RequestAuthenticator | None = None,
 ) -> AgentsModule:
     module_clock = clock or SystemClock()
 
@@ -68,6 +72,6 @@ def create_agents_module(
         create_agent_handler=create_agent_handler,
         publish_agent_handler=publish_agent_handler,
         list_agents_handler=list_agents_handler,
-        request_authenticator=AuthenticationNotConfiguredAuthenticator(),
+        request_authenticator=request_authenticator or AuthenticationNotConfiguredAuthenticator(),
     )
     return AgentsModule(router=router, agent_catalog=agent_catalog)

@@ -9,7 +9,10 @@ from hify.modules.agents.contracts.services import AgentCatalog
 from hify.modules.conversations.contracts.services import ConversationReader, ConversationWriter
 from hify.modules.knowledge.contracts.services import KnowledgeRetriever
 from hify.modules.providers.contracts.services import ModelGateway
-from hify.modules.runs.api.dependencies import AuthenticationNotConfiguredAuthenticator
+from hify.modules.runs.api.dependencies import (
+    AuthenticationNotConfiguredAuthenticator,
+    RequestAuthenticator,
+)
 from hify.modules.runs.api.router import create_runs_router
 from hify.modules.runs.application.commands.cancel_run import CancelRunHandler
 from hify.modules.runs.application.commands.create_run import CreateRunHandler
@@ -48,6 +51,7 @@ def create_runs_module(
     usage_reader: UsageReader,
     usage_quota_checker: UsageQuotaChecker,
     clock: Clock | None = None,
+    request_authenticator: RequestAuthenticator | None = None,
 ) -> RunsModule:
     module_clock = clock or SystemClock()
 
@@ -86,6 +90,6 @@ def create_runs_module(
         get_run_diagnostics_handler=get_run_diagnostics_handler,
         list_events_handler=list_events_for_actor_handler,
         run_executor=run_executor,
-        request_authenticator=AuthenticationNotConfiguredAuthenticator(),
+        request_authenticator=request_authenticator or AuthenticationNotConfiguredAuthenticator(),
     )
     return RunsModule(router=router, run_reader=run_reader, run_executor=run_executor)

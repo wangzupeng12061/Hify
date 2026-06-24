@@ -60,3 +60,18 @@ class ActorContextResponse(BaseModel):
     membership_id: UUID
     role: str
     permissions: tuple[str, ...]
+
+
+class DevLoginRequest(BaseModel):
+    email: str = Field(default="dev@hify.local", min_length=3, max_length=320)
+    display_name: str = Field(default="Hify Dev User", min_length=1, max_length=120)
+    team_name: str = Field(default="Hify Dev Team", min_length=1, max_length=120)
+
+
+class AuthSessionResponse(BaseModel):
+    actor: ActorContextResponse
+    expires_at: datetime
+
+
+class OidcLoginResponse(BaseModel):
+    authorization_url: str

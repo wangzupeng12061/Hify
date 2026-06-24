@@ -11,15 +11,29 @@ from hify.modules.identity.application.commands.add_team_member import (
     AddTeamMemberCommand,
     AddTeamMemberHandler,
 )
+from hify.modules.identity.application.commands.create_dev_session import (
+    CreateDevSessionCommand,
+    CreateDevSessionHandler,
+)
 from hify.modules.identity.application.commands.create_team import CreateTeamCommand, CreateTeamHandler
 from hify.modules.identity.application.commands.create_user import CreateUserCommand, CreateUserHandler
+from hify.modules.identity.application.commands.revoke_session import (
+    RevokeSessionCommand,
+    RevokeSessionHandler,
+)
+from hify.modules.identity.application.queries.authenticate_session import (
+    AuthenticateSessionHandler,
+    AuthenticateSessionQuery,
+)
 from hify.modules.identity.application.queries.get_actor_context import (
     GetActorContextHandler,
     GetActorContextQuery,
 )
+from hify.modules.identity.application.session_tokens import SessionTokenService
 from hify.modules.identity.contracts.dto import ActorContext
-from hify.modules.identity.domain.entities import Team, TeamMembership, User
+from hify.modules.identity.domain.entities import AuthSession, ExternalAccount, Team, TeamMembership, User
 from hify.modules.identity.domain.errors import (
+    IdentityAuthenticationError,
     IdentityPermissionDeniedError,
     MembershipAlreadyExistsError,
     UserEmailAlreadyExistsError,
@@ -84,11 +98,49 @@ class FakeMembershipRepository:
         return None
 
 
+class FakeAuthSessionRepository:
+    def __init__(self) -> None:
+        self.items: dict[UUID, AuthSession] = {}
+
+    async def add(self, session: AuthSession) -> None:
+        self.items[session.id] = session
+
+    async def get_by_token_hash(self, session_token_hash: str) -> AuthSession | None:
+        for session in self.items.values():
+            if session.session_token_hash == session_token_hash:
+                return session
+        return None
+
+    async def save(self, session: AuthSession) -> None:
+        self.items[session.id] = session
+
+
+class FakeExternalAccountRepository:
+    def __init__(self) -> None:
+        self.items: dict[UUID, ExternalAccount] = {}
+
+    async def add(self, account: ExternalAccount) -> None:
+        self.items[account.id] = account
+
+    async def get_by_provider_subject(
+        self,
+        *,
+        provider: str,
+        subject: str,
+    ) -> ExternalAccount | None:
+        for account in self.items.values():
+            if account.provider == provider and account.subject == subject:
+                return account
+        return None
+
+
 class FakeIdentityUnitOfWork:
     def __init__(self) -> None:
         self.users = FakeUserRepository()
         self.teams = FakeTeamRepository()
         self.memberships = FakeMembershipRepository()
+        self.sessions = FakeAuthSessionRepository()
+        self.external_accounts = FakeExternalAccountRepository()
         self.committed = False
         self.rolled_back = False
 
@@ -157,6 +209,67 @@ async def test_get_actor_context_requires_active_membership() -> None:
     assert actor.user_id == owner.id
     assert actor.team_id == team.id
     assert "identity.members.manage" in actor.permissions
+
+
+@pytest.mark.asyncio
+async def test_create_dev_session_creates_actor_and_cookie_backed_session() -> None:
+    unit_of_work = FakeIdentityUnitOfWork()
+    token_service = SessionTokenService()
+    create_session_handler = CreateDevSessionHandler(
+        lambda: unit_of_work,
+        FixedClock(),
+        token_service,
+    )
+    authenticate_session_handler = AuthenticateSessionHandler(
+        lambda: unit_of_work,
+        FixedClock(),
+        token_service,
+    )
+
+    result = await create_session_handler.handle(
+        CreateDevSessionCommand(
+            email="dev@hify.local",
+            display_name="Dev User",
+            team_name="Hify Dev",
+            ttl_seconds=3600,
+        )
+    )
+    actor = await authenticate_session_handler.handle(AuthenticateSessionQuery(token=result.token))
+
+    assert result.actor.role == "owner"
+    assert actor.user_id == result.actor.user_id
+    assert actor.team_id == result.actor.team_id
+    assert "runs.execute" in actor.permissions
+
+
+@pytest.mark.asyncio
+async def test_revoke_session_prevents_future_authentication() -> None:
+    unit_of_work = FakeIdentityUnitOfWork()
+    token_service = SessionTokenService()
+    create_session_handler = CreateDevSessionHandler(
+        lambda: unit_of_work,
+        FixedClock(),
+        token_service,
+    )
+    revoke_session_handler = RevokeSessionHandler(lambda: unit_of_work, FixedClock(), token_service)
+    authenticate_session_handler = AuthenticateSessionHandler(
+        lambda: unit_of_work,
+        FixedClock(),
+        token_service,
+    )
+
+    result = await create_session_handler.handle(
+        CreateDevSessionCommand(
+            email="dev@hify.local",
+            display_name="Dev User",
+            team_name="Hify Dev",
+            ttl_seconds=3600,
+        )
+    )
+    await revoke_session_handler.handle(RevokeSessionCommand(token=result.token))
+
+    with pytest.raises(IdentityAuthenticationError):
+        await authenticate_session_handler.handle(AuthenticateSessionQuery(token=result.token))
 
 
 @pytest.mark.asyncio
