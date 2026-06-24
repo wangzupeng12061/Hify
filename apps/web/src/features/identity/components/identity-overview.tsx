@@ -2,10 +2,12 @@
 
 import { HifyApiError } from "@/lib/api/errors";
 
-import { useCurrentUser } from "../hooks";
+import { useCreateDevSession, useCurrentUser, useLogout } from "../hooks";
 
 export function IdentityOverview() {
   const currentUserQuery = useCurrentUser();
+  const createDevSessionMutation = useCreateDevSession();
+  const logoutMutation = useLogout();
 
   if (currentUserQuery.isPending) {
     return (
@@ -18,7 +20,20 @@ export function IdentityOverview() {
   }
 
   if (currentUserQuery.isError) {
-    return <IdentityErrorState error={currentUserQuery.error} onRetry={() => currentUserQuery.refetch()} />;
+    return (
+      <IdentityErrorState
+        error={currentUserQuery.error}
+        isDevLoginPending={createDevSessionMutation.isPending}
+        onDevLogin={() =>
+          createDevSessionMutation.mutate({
+            display_name: "Hify Dev User",
+            email: "dev@hify.local",
+            team_name: "Hify Dev Team",
+          })
+        }
+        onRetry={() => currentUserQuery.refetch()}
+      />
+    );
   }
 
   const currentUser = currentUserQuery.data;
@@ -39,14 +54,32 @@ export function IdentityOverview() {
         <IdentityField label="Role" value={currentUser.role} />
         <IdentityField label="Permissions" value={currentUser.permissions.join(", ") || "None"} />
       </dl>
+      <button
+        className="button button--secondary"
+        disabled={logoutMutation.isPending}
+        onClick={() => logoutMutation.mutate()}
+        type="button"
+      >
+        {logoutMutation.isPending ? "Signing out..." : "Sign out"}
+      </button>
     </section>
   );
 }
 
-function IdentityErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
+function IdentityErrorState({
+  error,
+  isDevLoginPending,
+  onDevLogin,
+  onRetry,
+}: {
+  error: Error;
+  isDevLoginPending: boolean;
+  onDevLogin: () => void;
+  onRetry: () => void;
+}) {
   const description =
     error instanceof HifyApiError
-      ? `${error.code} (${error.status})`
+      ? `${error.message} (${error.code}, ${error.status})`
       : "The identity API returned an unexpected error.";
 
   return (
@@ -54,6 +87,12 @@ function IdentityErrorState({ error, onRetry }: { error: Error; onRetry: () => v
       <p className="panel__eyebrow">Identity</p>
       <h2>Unable to load current actor</h2>
       <p className="muted">{description}</p>
+      <p className="muted">
+        For local verification, create a developer session. Production must use OIDC login.
+      </p>
+      <button className="button" disabled={isDevLoginPending} onClick={onDevLogin} type="button">
+        {isDevLoginPending ? "Creating session..." : "Create dev session"}
+      </button>
       <button className="button" onClick={onRetry} type="button">
         Retry
       </button>

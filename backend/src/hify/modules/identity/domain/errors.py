@@ -13,6 +13,14 @@ class IdentityError(HifyError):
     code = "IDENTITY_ERROR"
 
 
+class IdentityAuthenticationError(IdentityError):
+    code = "IDENTITY_AUTHENTICATION_REQUIRED"
+
+
+class IdentityAuthProviderNotConfiguredError(IdentityError):
+    code = "IDENTITY_AUTH_PROVIDER_NOT_CONFIGURED"
+
+
 class IdentityValidationError(ValidationError):
     code = "IDENTITY_VALIDATION_ERROR"
 

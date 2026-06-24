@@ -6,7 +6,10 @@ from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hify.modules.mcp.contracts.services import McpToolDiscovery, McpToolInvoker
-from hify.modules.tools.api.dependencies import AuthenticationNotConfiguredAuthenticator
+from hify.modules.tools.api.dependencies import (
+    AuthenticationNotConfiguredAuthenticator,
+    RequestAuthenticator,
+)
 from hify.modules.tools.api.router import create_tools_router
 from hify.modules.tools.application.commands.create_tool import CreateToolHandler
 from hify.modules.tools.application.executor import ToolRuntimeExecutor
@@ -36,6 +39,7 @@ def create_tools_module(
     mcp_tool_discovery: McpToolDiscovery,
     mcp_tool_invoker: McpToolInvoker,
     clock: Clock | None = None,
+    request_authenticator: RequestAuthenticator | None = None,
 ) -> ToolsModule:
     module_clock = clock or SystemClock()
 
@@ -61,6 +65,6 @@ def create_tools_module(
         create_tool_handler=create_tool_handler,
         get_tool_handler=get_tool_for_actor_handler,
         list_tools_handler=list_tools_for_actor_handler,
-        request_authenticator=AuthenticationNotConfiguredAuthenticator(),
+        request_authenticator=request_authenticator or AuthenticationNotConfiguredAuthenticator(),
     )
     return ToolsModule(router=router, tool_catalog=tool_catalog, tool_executor=tool_executor)

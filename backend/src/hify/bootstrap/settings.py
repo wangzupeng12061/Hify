@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,3 +18,9 @@ class Settings(BaseSettings):
     celery_visibility_timeout_seconds: int = 3600
     provider_credential_encryption_key: str | None = None
     provider_credential_key_version: int = 1
+    auth_cookie_name: str = "hify_session"
+    auth_cookie_secure: bool = False
+    auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    auth_session_ttl_seconds: int = 604800
+    auth_dev_login_enabled: bool = False
+    auth_oidc_enabled: bool = False

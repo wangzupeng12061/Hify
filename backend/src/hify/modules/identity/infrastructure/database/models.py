@@ -153,3 +153,117 @@ class TeamMembershipModel(Base):
         default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
     )
+
+
+class AuthSessionModel(Base):
+    __tablename__ = "identity_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "length(btrim(session_token_hash)) > 0",
+            name="ck_identity_sessions__token_hash_not_blank",
+        ),
+        CheckConstraint(
+            "expires_at > created_at",
+            name="ck_identity_sessions__expires_after_created",
+        ),
+        Index(
+            "uq_identity_sessions__token_hash",
+            "session_token_hash",
+            unique=True,
+        ),
+        Index(
+            "ix_identity_sessions__expires_at_id",
+            "expires_at",
+            "id",
+        ),
+        Index(
+            "ix_identity_sessions__user_expires_id",
+            "user_id",
+            "expires_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=new_uuid)
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("identity_users.id"),
+        nullable=False,
+    )
+    team_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("identity_teams.id"),
+        nullable=False,
+    )
+    session_token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class ExternalAccountModel(Base):
+    __tablename__ = "identity_external_accounts"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "subject",
+            name="uq_identity_external_accounts__provider_subject",
+        ),
+        CheckConstraint(
+            "length(btrim(provider)) > 0",
+            name="ck_identity_external_accounts__provider_not_blank",
+        ),
+        CheckConstraint(
+            "length(btrim(subject)) > 0",
+            name="ck_identity_external_accounts__subject_not_blank",
+        ),
+        CheckConstraint(
+            "length(btrim(email)) > 0",
+            name="ck_identity_external_accounts__email_not_blank",
+        ),
+        CheckConstraint(
+            "length(btrim(display_name)) > 0",
+            name="ck_identity_external_accounts__display_name_not_blank",
+        ),
+        Index(
+            "ix_identity_external_accounts__user_provider_id",
+            "user_id",
+            "provider",
+            "id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=new_uuid)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    subject: Mapped[str] = mapped_column(Text, nullable=False)
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("identity_users.id"),
+        nullable=False,
+    )
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )

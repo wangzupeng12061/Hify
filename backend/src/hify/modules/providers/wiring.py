@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from hify.modules.providers.api.dependencies import AuthenticationNotConfiguredAuthenticator
+from hify.modules.providers.api.dependencies import (
+    AuthenticationNotConfiguredAuthenticator,
+    RequestAuthenticator,
+)
 from hify.modules.providers.api.router import create_providers_router
 from hify.modules.providers.application.commands.add_provider_model import AddProviderModelHandler
 from hify.modules.providers.application.commands.create_provider import CreateProviderHandler
@@ -53,6 +56,7 @@ def create_providers_module(
     credential_encryption_key: str | None,
     credential_key_version: int = 1,
     clock: Clock | None = None,
+    request_authenticator: RequestAuthenticator | None = None,
 ) -> ProvidersModule:
     module_clock = clock or SystemClock()
     credential_encryptor = (
@@ -88,7 +92,7 @@ def create_providers_module(
         add_provider_model_handler=add_provider_model_handler,
         set_provider_model_pricing_handler=set_provider_model_pricing_handler,
         list_models_handler=list_models_for_actor_handler,
-        request_authenticator=AuthenticationNotConfiguredAuthenticator(),
+        request_authenticator=request_authenticator or AuthenticationNotConfiguredAuthenticator(),
     )
     return ProvidersModule(
         router=router,

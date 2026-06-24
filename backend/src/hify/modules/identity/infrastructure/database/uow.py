@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hify.modules.identity.application.ports import IdentityUnitOfWork
 from hify.modules.identity.infrastructure.database.repositories import (
+    SqlAlchemyAuthSessionRepository,
+    SqlAlchemyExternalAccountRepository,
     SqlAlchemyMembershipRepository,
     SqlAlchemyTeamRepository,
     SqlAlchemyUserRepository,
@@ -17,6 +19,8 @@ class SqlAlchemyIdentityUnitOfWork(IdentityUnitOfWork):
     users: SqlAlchemyUserRepository
     teams: SqlAlchemyTeamRepository
     memberships: SqlAlchemyMembershipRepository
+    sessions: SqlAlchemyAuthSessionRepository
+    external_accounts: SqlAlchemyExternalAccountRepository
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
@@ -27,6 +31,8 @@ class SqlAlchemyIdentityUnitOfWork(IdentityUnitOfWork):
         self.users = SqlAlchemyUserRepository(self._session)
         self.teams = SqlAlchemyTeamRepository(self._session)
         self.memberships = SqlAlchemyMembershipRepository(self._session)
+        self.sessions = SqlAlchemyAuthSessionRepository(self._session)
+        self.external_accounts = SqlAlchemyExternalAccountRepository(self._session)
         return self
 
     async def __aexit__(

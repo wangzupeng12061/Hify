@@ -6,7 +6,10 @@ from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hify.modules.agents.contracts.services import AgentCatalog
-from hify.modules.conversations.api.dependencies import AuthenticationNotConfiguredAuthenticator
+from hify.modules.conversations.api.dependencies import (
+    AuthenticationNotConfiguredAuthenticator,
+    RequestAuthenticator,
+)
 from hify.modules.conversations.api.router import create_conversations_router
 from hify.modules.conversations.application.commands.append_conversation_message import (
     AppendConversationMessageHandler,
@@ -51,6 +54,7 @@ def create_conversations_module(
     *,
     agent_catalog: AgentCatalog,
     clock: Clock | None = None,
+    request_authenticator: RequestAuthenticator | None = None,
 ) -> ConversationsModule:
     module_clock = clock or SystemClock()
 
@@ -88,7 +92,7 @@ def create_conversations_module(
         list_conversations_handler=list_conversations_for_actor_handler,
         list_messages_handler=list_messages_for_actor_handler,
         submit_feedback_handler=submit_feedback_handler,
-        request_authenticator=AuthenticationNotConfiguredAuthenticator(),
+        request_authenticator=request_authenticator or AuthenticationNotConfiguredAuthenticator(),
     )
     return ConversationsModule(
         router=router,

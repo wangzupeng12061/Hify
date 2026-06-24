@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from hify.modules.knowledge.api.dependencies import AuthenticationNotConfiguredAuthenticator
+from hify.modules.knowledge.api.dependencies import (
+    AuthenticationNotConfiguredAuthenticator,
+    RequestAuthenticator,
+)
 from hify.modules.knowledge.api.router import create_knowledge_router
 from hify.modules.knowledge.application.commands.create_knowledge_base import (
     CreateKnowledgeBaseHandler,
@@ -39,6 +42,7 @@ def create_knowledge_module(
     model_catalog: ModelCatalog,
     embedding_gateway: EmbeddingGateway,
     clock: Clock | None = None,
+    request_authenticator: RequestAuthenticator | None = None,
 ) -> KnowledgeModule:
     module_clock = clock or SystemClock()
 
@@ -66,7 +70,7 @@ def create_knowledge_module(
         get_knowledge_base_handler=get_knowledge_base_handler,
         list_knowledge_documents_handler=list_knowledge_documents_handler,
         ingest_document_handler=ingest_document_handler,
-        request_authenticator=AuthenticationNotConfiguredAuthenticator(),
+        request_authenticator=request_authenticator or AuthenticationNotConfiguredAuthenticator(),
     )
     return KnowledgeModule(
         router=router,
