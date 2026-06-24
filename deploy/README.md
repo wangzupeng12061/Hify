@@ -27,6 +27,9 @@ not Kubernetes.
    deploy/smoke-test.sh http://localhost:8080
    ```
 
+   For a real provider and browser chat verification path, also run the
+   [local DeepSeek smoke test](../docs/operations/local-deepseek-smoke-test.md).
+
 5. Open the web app:
 
    ```text
