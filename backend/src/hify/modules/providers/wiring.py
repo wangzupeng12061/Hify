@@ -33,6 +33,7 @@ from hify.modules.providers.infrastructure.adapters.fake import (
     MissingEmbeddingGateway,
     MissingModelGateway,
 )
+from hify.modules.providers.infrastructure.adapters.deepseek import DeepSeekModelGateway
 from hify.modules.providers.infrastructure.database.uow import SqlAlchemyProvidersUnitOfWork
 from hify.modules.providers.infrastructure.encryption import (
     FernetCredentialEncryptor,
@@ -84,7 +85,11 @@ def create_providers_module(
     get_model_pricing_handler = GetModelPricingHandler(unit_of_work_factory)
     model_catalog = ModelCatalogService(get_model_handler, list_models_handler)
     model_pricing_catalog = ModelPricingCatalogService(get_model_pricing_handler)
-    model_gateway = MissingModelGateway()
+    model_gateway = (
+        DeepSeekModelGateway(unit_of_work_factory, credential_encryptor)
+        if isinstance(credential_encryptor, FernetCredentialEncryptor)
+        else MissingModelGateway()
+    )
     embedding_gateway = MissingEmbeddingGateway()
 
     router = create_providers_router(

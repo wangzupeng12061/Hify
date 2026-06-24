@@ -35,6 +35,11 @@ class FernetCredentialEncryptor(CredentialEncryptor):
             fingerprint=fingerprint,
         )
 
+    def decrypt(self, secret: CredentialSecret) -> str:
+        if secret.key_version != self._key_version:
+            raise ProviderValidationError("provider credential key version is unsupported")
+        return self._fernet.decrypt(secret.ciphertext).decode()
+
 
 class MissingCredentialEncryptor(CredentialEncryptor):
     def encrypt(self, plaintext: str) -> CredentialSecret:

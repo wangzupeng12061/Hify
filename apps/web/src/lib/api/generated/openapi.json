@@ -778,7 +778,7 @@
             "type": "string"
           },
           "provider_type": {
-            "pattern": "^(openai|anthropic|gemini|ollama)$",
+            "pattern": "^(openai|anthropic|gemini|ollama|deepseek)$",
             "title": "Provider Type",
             "type": "string"
           }

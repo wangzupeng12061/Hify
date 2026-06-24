@@ -25,6 +25,7 @@ class SqlAlchemyRunRepository:
 
     async def add(self, run: AgentRun) -> None:
         self._session.add(_run_to_model(run))
+        await self._session.flush()
 
     async def save(self, run: AgentRun) -> None:
         model = await self._session.get(RunModel, run.id)
@@ -72,6 +73,7 @@ class SqlAlchemyRunStepRepository:
 
     async def add(self, step: RunStep) -> None:
         self._session.add(_step_to_model(step))
+        await self._session.flush()
 
     async def save(self, step: RunStep) -> None:
         model = await self._session.get(RunStepModel, step.id)

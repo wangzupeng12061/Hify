@@ -24,7 +24,7 @@ class ModelProviderModel(Base):
     __tablename__ = "providers_providers"
     __table_args__ = (
         CheckConstraint(
-            "provider_type IN ('openai', 'anthropic', 'gemini', 'ollama')",
+            "provider_type IN ('openai', 'anthropic', 'gemini', 'ollama', 'deepseek')",
             name="ck_providers_providers__provider_type",
         ),
         CheckConstraint(
