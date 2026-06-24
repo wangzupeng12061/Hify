@@ -37,6 +37,8 @@ def test_openapi_operation_ids_are_stable_and_unique() -> None:
     assert len(operation_ids) == len(set(operation_ids))
     assert "runs_get_run" in operation_ids
     assert "providers_set_provider_model_pricing" in operation_ids
+    assert "health_live" in operation_ids
+    assert "health_ready" in operation_ids
     assert "healthz" in operation_ids
 
 
@@ -53,5 +55,7 @@ def test_openapi_error_response_contract_is_documented() -> None:
 
 def load_generated_openapi_schema() -> dict[str, object]:
     backend_root = Path(__file__).resolve().parents[3]
-    output_path = backend_root.parent / "apps" / "web" / "src" / "lib" / "api" / "generated" / "openapi.json"
+    output_path = (
+        backend_root.parent / "apps" / "web" / "src" / "lib" / "api" / "generated" / "openapi.json"
+    )
     return json.loads(output_path.read_text(encoding="utf-8"))
