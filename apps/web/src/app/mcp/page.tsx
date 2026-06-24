@@ -1,5 +1,5 @@
-import { McpManagement } from "@/features/mcp/components/mcp-management";
+import { redirect } from "next/navigation";
 
 export default function McpPage() {
-  return <McpManagement />;
+  redirect("/admin/mcp");
 }

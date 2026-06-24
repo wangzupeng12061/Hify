@@ -1,5 +1,5 @@
-import { AgentsManagement } from "@/features/agents/components/agents-management";
+import { redirect } from "next/navigation";
 
 export default function AgentsPage() {
-  return <AgentsManagement />;
+  redirect("/admin/agents");
 }

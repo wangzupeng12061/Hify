@@ -1,5 +1,5 @@
-import { WorkflowsManagement } from "@/features/workflows/components/workflows-management";
+import { redirect } from "next/navigation";
 
 export default function WorkflowsPage() {
-  return <WorkflowsManagement />;
+  redirect("/admin/workflows");
 }

@@ -1,5 +1,5 @@
-import { UsageManagement } from "@/features/usage/components/usage-management";
+import { redirect } from "next/navigation";
 
 export default function UsagePage() {
-  return <UsageManagement />;
+  redirect("/admin/usage");
 }

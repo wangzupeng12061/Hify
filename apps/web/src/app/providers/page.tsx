@@ -1,5 +1,5 @@
-import { ProvidersManagement } from "@/features/providers/components/providers-management";
+import { redirect } from "next/navigation";
 
 export default function ProvidersPage() {
-  return <ProvidersManagement />;
+  redirect("/admin/providers");
 }

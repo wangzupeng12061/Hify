@@ -1,5 +1,5 @@
-import { ChatRunsWorkspace } from "@/features/runs/components/chat-runs-workspace";
+import { redirect } from "next/navigation";
 
 export default function RunsPage() {
-  return <ChatRunsWorkspace />;
+  redirect("/admin/runs");
 }

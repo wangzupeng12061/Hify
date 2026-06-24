@@ -1,5 +1,5 @@
-import { KnowledgeManagement } from "@/features/knowledge/components/knowledge-management";
+import { redirect } from "next/navigation";
 
 export default function KnowledgePage() {
-  return <KnowledgeManagement />;
+  redirect("/admin/knowledge");
 }
