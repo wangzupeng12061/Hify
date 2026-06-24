@@ -1,14 +1,21 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConversationDetail } from "@/features/conversations/components/conversation-detail";
+import { UserChatWorkspace } from "@/features/chat/components/user-chat-workspace";
 
 const hookMocks = vi.hoisted(() => ({
   appendMessage: vi.fn(),
+  createConversation: vi.fn(),
   createRun: vi.fn(),
-  refetchConversation: vi.fn(),
-  refetchMessages: vi.fn(),
   startRunStream: vi.fn(),
+}));
+
+vi.mock("@/features/agents", () => ({
+  useAgents: () => ({
+    data: [createPublishedAgentResponse(), createDraftAgentResponse()],
+    error: null,
+    isLoading: false,
+  }),
 }));
 
 vi.mock("@/features/conversations", () => ({
@@ -17,21 +24,20 @@ vi.mock("@/features/conversations", () => ({
     isPending: false,
     mutateAsync: hookMocks.appendMessage,
   }),
-  useConversation: () => ({
-    data: createConversationResponse(),
-    error: null,
-    isFetching: false,
-    refetch: hookMocks.refetchConversation,
-  }),
   useConversationMessages: () => ({
     data: {
       has_more: false,
-      items: [createMessageResponse()],
+      items: [],
       next_cursor: null,
     },
     error: null,
     isFetching: false,
-    refetch: hookMocks.refetchMessages,
+    refetch: vi.fn(),
+  }),
+  useCreateConversation: () => ({
+    error: null,
+    isPending: false,
+    mutateAsync: hookMocks.createConversation,
   }),
 }));
 
@@ -60,20 +66,29 @@ vi.mock("@/features/runs", () => ({
   }),
 }));
 
-describe("ConversationDetail", () => {
+describe("UserChatWorkspace", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
   });
 
-  it("renders conversation messages and sends a message with a streaming run", async () => {
-    hookMocks.appendMessage.mockResolvedValueOnce(createMessageResponse({ id: "message-2" }));
+  it("shows only published agents as chat candidates", () => {
+    render(<UserChatWorkspace />);
+
+    expect(screen.getByText("Support Agent · v1")).toBeTruthy();
+    expect(screen.queryByText("Draft Agent · v0")).toBeNull();
+    expect(screen.queryByText("Latest run diagnostics")).toBeNull();
+  });
+
+  it("creates a conversation, sends a message, and starts a streaming run", async () => {
+    hookMocks.createConversation.mockResolvedValueOnce(createConversationResponse());
+    hookMocks.appendMessage.mockResolvedValueOnce(createMessageResponse());
     hookMocks.createRun.mockResolvedValueOnce(createRunResponse());
     hookMocks.startRunStream.mockImplementationOnce(({ onEvent }) => {
       onEvent(
         createRunEventResponse({
           event_type: "output.text_delta",
-          payload: { text: "Live answer" },
+          payload: { text: "Hello from agent" },
           sequence_number: 2,
         }),
       );
@@ -81,38 +96,75 @@ describe("ConversationDetail", () => {
       return Promise.resolve();
     });
 
-    render(<ConversationDetail conversationId="conversation-1" />);
+    render(<UserChatWorkspace />);
 
-    expect(screen.getByText("Support chat")).toBeTruthy();
-    expect(screen.getByText("Hello")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Agent"), {
+      target: { value: "agent-1" },
+    });
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "Support chat" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start conversation" }));
+
+    await waitFor(() => expect(hookMocks.createConversation).toHaveBeenCalledTimes(1));
+    expect(hookMocks.createConversation).toHaveBeenCalledWith({
+      agent_id: "agent-1",
+      title: "Support chat",
+    });
 
     fireEvent.change(screen.getByLabelText("Message"), {
-      target: { value: " Continue " },
+      target: { value: " Help me " },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send and run" }));
 
     await waitFor(() => expect(hookMocks.appendMessage).toHaveBeenCalledTimes(1));
     expect(hookMocks.appendMessage).toHaveBeenCalledWith({
-      content: "Continue",
+      content: "Help me",
       conversationId: "conversation-1",
       idempotency_key: expect.stringMatching(/^message-/),
     });
+
     await waitFor(() => expect(hookMocks.createRun).toHaveBeenCalledTimes(1));
     expect(hookMocks.createRun).toHaveBeenCalledWith({
       conversation_id: "conversation-1",
       idempotency_key: expect.stringMatching(/^run-/),
     });
-    expect(await screen.findByText("Live answer")).toBeTruthy();
-    expect(screen.queryByText("Latest run diagnostics")).toBeNull();
+    expect(await screen.findByText("Hello from agent")).toBeTruthy();
   });
 });
+
+function createPublishedAgentResponse() {
+  return {
+    created_at: "2026-06-23T00:00:00Z",
+    description: "Published support assistant",
+    id: "agent-1",
+    knowledge_base_ids: [],
+    latest_version_number: 1,
+    name: "Support Agent",
+    provider_model_id: "model-1",
+    status: "published",
+    team_id: "team-1",
+    updated_at: "2026-06-23T00:00:00Z",
+    workflow_id: null,
+  };
+}
+
+function createDraftAgentResponse() {
+  return {
+    ...createPublishedAgentResponse(),
+    id: "agent-draft-1",
+    latest_version_number: 0,
+    name: "Draft Agent",
+    status: "draft",
+  };
+}
 
 function createConversationResponse() {
   return {
     agent_id: "agent-1",
     created_at: "2026-06-23T00:00:00Z",
     id: "conversation-1",
-    message_count: 1,
+    message_count: 0,
     status: "active",
     team_id: "team-1",
     title: "Support chat",
@@ -120,9 +172,9 @@ function createConversationResponse() {
   };
 }
 
-function createMessageResponse(override: Record<string, unknown> = {}) {
+function createMessageResponse() {
   return {
-    content: "Hello",
+    content: "Help me",
     conversation_id: "conversation-1",
     created_at: "2026-06-23T00:00:00Z",
     id: "message-1",
@@ -130,11 +182,10 @@ function createMessageResponse(override: Record<string, unknown> = {}) {
     sequence_number: 1,
     status: "created",
     team_id: "team-1",
-    ...override,
   };
 }
 
-function createRunResponse(override: Record<string, unknown> = {}) {
+function createRunResponse() {
   return {
     agent_id: "agent-1",
     agent_version_id: "agent-version-1",
@@ -151,7 +202,6 @@ function createRunResponse(override: Record<string, unknown> = {}) {
     step_count: 0,
     team_id: "team-1",
     updated_at: "2026-06-23T00:00:00Z",
-    ...override,
   };
 }
 

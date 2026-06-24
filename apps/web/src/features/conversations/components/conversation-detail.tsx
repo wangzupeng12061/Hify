@@ -15,10 +15,6 @@ type MessageFormState = {
   content: string;
 };
 
-type RunFormState = {
-  idempotencyKey: string;
-};
-
 const initialMessageForm: MessageFormState = {
   content: "",
 };
@@ -30,9 +26,6 @@ export function ConversationDetail({ conversationId }: { conversationId: string 
   const createRunMutation = useCreateRun();
   const runStream = useRunStream();
   const [messageForm, setMessageForm] = useState(initialMessageForm);
-  const [runForm, setRunForm] = useState<RunFormState>(() => ({
-    idempotencyKey: createIdempotencyKey("run"),
-  }));
   const [run, setRun] = useState<Run | null>(null);
   const [streamedEvents, setStreamedEvents] = useState<RunEvent[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
@@ -69,23 +62,13 @@ export function ConversationDetail({ conversationId }: { conversationId: string 
       setMessageForm(initialMessageForm);
       await messagesQuery.refetch();
       await conversationQuery.refetch();
-    } catch {
-      return;
-    }
-  }
 
-  async function handleCreateRun(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError(null);
-
-    try {
       const createdRun = await createRunMutation.mutateAsync({
         conversation_id: conversationId,
-        idempotency_key: runForm.idempotencyKey.trim() || createIdempotencyKey("run"),
+        idempotency_key: createIdempotencyKey("run"),
       });
       setRun(createdRun);
       setStreamedEvents([]);
-      setRunForm({ idempotencyKey: createIdempotencyKey("run") });
       void runStream.start({
         onComplete: () => {
           void messagesQuery.refetch();
@@ -104,8 +87,8 @@ export function ConversationDetail({ conversationId }: { conversationId: string 
         <p className="hero__eyebrow">Conversation detail</p>
         <h2>{conversationQuery.data?.title ?? "Conversation"}</h2>
         <p>
-          Read conversation messages, append a new user message, and start a streaming run from
-          this conversation context.
+          Continue this conversation with the selected agent. Operational diagnostics stay in the
+          Admin Console.
         </p>
       </section>
 
@@ -131,25 +114,16 @@ export function ConversationDetail({ conversationId }: { conversationId: string 
         </dl>
       </section>
 
-      <section className="provider-layout">
-        <MessageForm
-          form={messageForm}
-          isSubmitting={appendMessageMutation.isPending}
-          onChange={setMessageForm}
-          onSubmit={handleAppendMessage}
-        />
-        <RunForm
-          form={runForm}
-          isSubmitting={createRunMutation.isPending}
-          onChange={setRunForm}
-          onSubmit={handleCreateRun}
-          run={run}
-        />
-      </section>
+      <MessageForm
+        form={messageForm}
+        isSubmitting={appendMessageMutation.isPending || createRunMutation.isPending}
+        onChange={setMessageForm}
+        onSubmit={handleAppendMessage}
+        streamStatus={runStream.status}
+      />
 
       <AssistantOutputPanel assistantOutput={assistantOutput} streamStatus={runStream.status} />
       <ConversationMessages isLoading={messagesQuery.isFetching} messages={messages} />
-      <RunEvents events={events} isLoading={runEventsQuery.isFetching} run={run} />
     </div>
   );
 }
@@ -159,18 +133,20 @@ function MessageForm({
   isSubmitting,
   onChange,
   onSubmit,
+  streamStatus,
 }: {
   form: MessageFormState;
   isSubmitting: boolean;
   onChange: (form: MessageFormState) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  streamStatus: string;
 }) {
   return (
     <form className="panel form-panel" onSubmit={onSubmit}>
       <p className="panel__eyebrow">Message</p>
-      <h2>Send user message</h2>
+      <h2>Ask the agent</h2>
       <label className="form-field">
-        User message
+        Message
         <textarea
           name="content"
           onChange={(event) => onChange({ content: event.target.value })}
@@ -180,42 +156,11 @@ function MessageForm({
         />
       </label>
       <button className="button" disabled={isSubmitting} type="submit">
-        {isSubmitting ? "Sending..." : "Send message"}
+        {isSubmitting ? "Sending..." : "Send and run"}
       </button>
-    </form>
-  );
-}
-
-function RunForm({
-  form,
-  isSubmitting,
-  onChange,
-  onSubmit,
-  run,
-}: {
-  form: RunFormState;
-  isSubmitting: boolean;
-  onChange: (form: RunFormState) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  run: Run | null;
-}) {
-  return (
-    <form className="panel form-panel" onSubmit={onSubmit}>
-      <p className="panel__eyebrow">Run</p>
-      <h2>Start agent run</h2>
-      <label className="form-field">
-        Idempotency key
-        <input
-          name="idempotencyKey"
-          onChange={(event) => onChange({ idempotencyKey: event.target.value })}
-          required
-          value={form.idempotencyKey}
-        />
-      </label>
-      <button className="button" disabled={isSubmitting} type="submit">
-        {isSubmitting ? "Starting..." : "Start run"}
-      </button>
-      {run ? <p className="form-result">Run ID: {run.id}</p> : null}
+      <p className="form-result">
+        <strong>Stream:</strong> <code>{streamStatus}</code>
+      </p>
     </form>
   );
 }
@@ -271,44 +216,6 @@ function ConversationMessages({
                 #{message.sequence_number} {message.role}
               </span>
               <p>{message.content}</p>
-            </li>
-          ))}
-        </ol>
-      )}
-    </section>
-  );
-}
-
-function RunEvents({
-  events,
-  isLoading,
-  run,
-}: {
-  events: RunEvent[];
-  isLoading: boolean;
-  run: Run | null;
-}) {
-  return (
-    <section className="panel">
-      <div className="panel__header">
-        <div>
-          <p className="panel__eyebrow">Run events</p>
-          <h2>Latest run diagnostics</h2>
-        </div>
-        <span className="status-pill">
-          {isLoading ? "Refreshing" : run ? `${events.length} events` : "No run"}
-        </span>
-      </div>
-      {events.length === 0 ? (
-        <p className="muted">No run events loaded.</p>
-      ) : (
-        <ol className="timeline-list">
-          {events.map((event) => (
-            <li className="timeline-list__item" key={event.id}>
-              <span>
-                #{event.sequence_number} {event.event_type}
-              </span>
-              <pre>{JSON.stringify(event.payload, null, 2)}</pre>
             </li>
           ))}
         </ol>

@@ -1,5 +1,5 @@
-import { ToolsManagement } from "@/features/tools/components/tools-management";
+import { redirect } from "next/navigation";
 
 export default function ToolsPage() {
-  return <ToolsManagement />;
+  redirect("/admin/tools");
 }
