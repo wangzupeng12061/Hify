@@ -223,6 +223,7 @@ function ProviderForm({
         >
           <option value="openai">OpenAI</option>
           <option value="anthropic">Claude</option>
+          <option value="deepseek">DeepSeek</option>
           <option value="gemini">Gemini</option>
           <option value="ollama">Ollama</option>
         </select>

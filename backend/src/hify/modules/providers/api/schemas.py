@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class CreateProviderRequest(BaseModel):
-    provider_type: str = Field(pattern="^(openai|anthropic|gemini|ollama)$")
+    provider_type: str = Field(pattern="^(openai|anthropic|gemini|ollama|deepseek)$")
     name: str = Field(min_length=1, max_length=120)
     base_url: str | None = Field(default=None, max_length=500)
     credential_plaintext: str = Field(min_length=1, max_length=4096)

@@ -74,6 +74,7 @@ class PublishAgentHandler:
                 published_by=command.actor.user_id,
                 now=now,
             )
+            await unit_of_work.agents.save(agent)
             await unit_of_work.versions.add(agent_version)
             await unit_of_work.commit()
 

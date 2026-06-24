@@ -14,6 +14,7 @@ class ProviderType(StrEnum):
     ANTHROPIC = "anthropic"
     GEMINI = "gemini"
     OLLAMA = "ollama"
+    DEEPSEEK = "deepseek"
 
 
 class ProviderStatus(StrEnum):
