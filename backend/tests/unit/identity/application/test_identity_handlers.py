@@ -11,6 +11,14 @@ from hify.modules.identity.application.commands.add_team_member import (
     AddTeamMemberCommand,
     AddTeamMemberHandler,
 )
+from hify.modules.identity.application.commands.authenticate_trusted_header import (
+    AuthenticateTrustedHeaderCommand,
+    AuthenticateTrustedHeaderHandler,
+)
+from hify.modules.identity.application.commands.bootstrap_first_admin import (
+    BootstrapFirstAdminCommand,
+    BootstrapFirstAdminHandler,
+)
 from hify.modules.identity.application.commands.create_dev_session import (
     CreateDevSessionCommand,
     CreateDevSessionHandler,
@@ -33,12 +41,13 @@ from hify.modules.identity.application.session_tokens import SessionTokenService
 from hify.modules.identity.contracts.dto import ActorContext
 from hify.modules.identity.domain.entities import AuthSession, ExternalAccount, Team, TeamMembership, User
 from hify.modules.identity.domain.errors import (
+    FirstAdminAlreadyBootstrappedError,
     IdentityAuthenticationError,
     IdentityPermissionDeniedError,
     MembershipAlreadyExistsError,
     UserEmailAlreadyExistsError,
 )
-from hify.modules.identity.domain.value_objects import EmailAddress, TeamRole
+from hify.modules.identity.domain.value_objects import EmailAddress, MembershipStatus, TeamRole
 from hify.shared.domain.clock import Clock
 
 
@@ -96,6 +105,12 @@ class FakeMembershipRepository:
             if membership.team_id == team_id and membership.user_id == user_id:
                 return membership
         return None
+
+    async def has_active_owner(self) -> bool:
+        return any(
+            membership.role == TeamRole.OWNER and membership.status == MembershipStatus.ACTIVE
+            for membership in self.items.values()
+        )
 
 
 class FakeAuthSessionRepository:
@@ -239,6 +254,78 @@ async def test_create_dev_session_creates_actor_and_cookie_backed_session() -> N
     assert result.actor.role == "owner"
     assert actor.user_id == result.actor.user_id
     assert actor.team_id == result.actor.team_id
+    assert "runs.execute" in actor.permissions
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_first_admin_creates_owner_session_once() -> None:
+    unit_of_work = FakeIdentityUnitOfWork()
+    token_service = SessionTokenService()
+    handler = BootstrapFirstAdminHandler(lambda: unit_of_work, FixedClock(), token_service)
+
+    result = await handler.handle(
+        BootstrapFirstAdminCommand(
+            email="owner@example.com",
+            display_name="Owner",
+            team_name="Hify",
+            ttl_seconds=3600,
+        )
+    )
+
+    assert result.actor.role == "owner"
+    assert "identity.team.manage" in result.actor.permissions
+    with pytest.raises(FirstAdminAlreadyBootstrappedError):
+        await handler.handle(
+            BootstrapFirstAdminCommand(
+                email="second@example.com",
+                display_name="Second",
+                team_name="Hify",
+                ttl_seconds=3600,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_trusted_header_auth_requires_bootstrapped_team() -> None:
+    unit_of_work = FakeIdentityUnitOfWork()
+    handler = AuthenticateTrustedHeaderHandler(lambda: unit_of_work, FixedClock())
+
+    with pytest.raises(IdentityAuthenticationError):
+        await handler.handle(
+            AuthenticateTrustedHeaderCommand(
+                email="member@example.com",
+                display_name="Member",
+                team_name="Hify",
+                default_role="member",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_trusted_header_auth_adds_member_to_existing_team() -> None:
+    unit_of_work = FakeIdentityUnitOfWork()
+    token_service = SessionTokenService()
+    bootstrap_handler = BootstrapFirstAdminHandler(lambda: unit_of_work, FixedClock(), token_service)
+    await bootstrap_handler.handle(
+        BootstrapFirstAdminCommand(
+            email="owner@example.com",
+            display_name="Owner",
+            team_name="Hify",
+            ttl_seconds=3600,
+        )
+    )
+    handler = AuthenticateTrustedHeaderHandler(lambda: unit_of_work, FixedClock())
+
+    actor = await handler.handle(
+        AuthenticateTrustedHeaderCommand(
+            email="member@example.com",
+            display_name="Member",
+            team_name="Hify",
+            default_role="member",
+        )
+    )
+
+    assert actor.role == "member"
     assert "runs.execute" in actor.permissions
 
 

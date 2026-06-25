@@ -68,6 +68,12 @@ class DevLoginRequest(BaseModel):
     team_name: str = Field(default="Hify Dev Team", min_length=1, max_length=120)
 
 
+class BootstrapFirstAdminRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    display_name: str = Field(min_length=1, max_length=120)
+    team_name: str = Field(min_length=1, max_length=120)
+
+
 class AuthSessionResponse(BaseModel):
     actor: ActorContextResponse
     expires_at: datetime

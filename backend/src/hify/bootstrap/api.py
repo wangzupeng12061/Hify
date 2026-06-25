@@ -30,6 +30,7 @@ def create_app(container: HifyContainer | None = None) -> FastAPI:
     @app.get("/health/ready")
     async def health_ready() -> JSONResponse:
         checks: dict[str, str] = {
+            "auth": "unknown",
             "database": "unknown",
             "provider_credential_encryption_key": "unknown",
             "redis": "unknown",
@@ -47,9 +48,14 @@ def create_app(container: HifyContainer | None = None) -> FastAPI:
         else:
             checks["provider_credential_encryption_key"] = "missing"
 
+        checks["auth"] = _auth_health_status(resolved_container.settings)
         checks["redis"] = await _redis_health_status(resolved_container.settings.redis_url)
 
-        if checks["database"] != "ok" or checks["provider_credential_encryption_key"] != "ok":
+        if (
+            checks["database"] != "ok"
+            or checks["provider_credential_encryption_key"] != "ok"
+            or checks["auth"] not in {"ok", "development"}
+        ):
             return JSONResponse(
                 status_code=503,
                 content={"status": "unavailable", "checks": checks},
@@ -70,6 +76,19 @@ def create_app(container: HifyContainer | None = None) -> FastAPI:
     app.include_router(resolved_container.usage.router)
     app.include_router(resolved_container.workflows.router)
     return app
+
+
+def _auth_health_status(settings: object) -> str:
+    deployment_mode = getattr(settings, "deployment_mode", "development")
+    if deployment_mode != "production":
+        return "development"
+    if getattr(settings, "auth_dev_login_enabled", False):
+        return "development_login_enabled"
+    if getattr(settings, "auth_trusted_header_enabled", False):
+        return "ok"
+    if getattr(settings, "auth_oidc_enabled", False):
+        return "oidc_not_implemented"
+    return "missing"
 
 
 async def _redis_health_status(redis_url: str) -> str:

@@ -49,5 +49,9 @@ class MembershipAlreadyExistsError(ConflictError):
     code = "IDENTITY_MEMBERSHIP_ALREADY_EXISTS"
 
 
+class FirstAdminAlreadyBootstrappedError(ConflictError):
+    code = "IDENTITY_FIRST_ADMIN_ALREADY_BOOTSTRAPPED"
+
+
 class IdentityPermissionDeniedError(PermissionDeniedError):
     code = "IDENTITY_PERMISSION_DENIED"

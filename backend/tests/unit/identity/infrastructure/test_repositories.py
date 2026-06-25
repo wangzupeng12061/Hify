@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hify.modules.identity.domain.value_objects import EmailAddress
 from hify.modules.identity.infrastructure.database.repositories import (
+    SqlAlchemyMembershipRepository,
     SqlAlchemyTeamRepository,
     SqlAlchemyUserRepository,
 )
@@ -42,6 +43,18 @@ def test_team_lookup_matches_case_insensitive_unique_index() -> None:
     sql = _compile_sql(statement)
     assert "lower(identity_teams.name)" in sql
     assert statement.compile(dialect=postgresql.dialect()).params["lower_1"] == "platform"
+
+
+def test_active_owner_lookup_stays_inside_identity_memberships() -> None:
+    session = SessionSpy()
+    repository = SqlAlchemyMembershipRepository(cast(AsyncSession, session))
+
+    statement = _run(repository.has_active_owner(), session)
+
+    sql = _compile_sql(statement)
+    assert "identity_memberships" in sql
+    assert "identity_memberships.role" in sql
+    assert "identity_memberships.status" in sql
 
 
 def _run(awaitable: Any, session: SessionSpy) -> Any:

@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="HIFY_", env_file=".env", extra="ignore")
 
+    deployment_mode: Literal["development", "production"] = "development"
     database_url: str = "postgresql+psycopg://hify:hify@localhost:5432/hify"
     database_echo: bool = False
     redis_url: str = "redis://localhost:6379/0"
@@ -24,3 +25,9 @@ class Settings(BaseSettings):
     auth_session_ttl_seconds: int = 604800
     auth_dev_login_enabled: bool = False
     auth_oidc_enabled: bool = False
+    auth_bootstrap_token: str | None = None
+    auth_trusted_header_enabled: bool = False
+    auth_trusted_email_header: str = "cf-access-authenticated-user-email"
+    auth_trusted_display_name_header: str = "cf-access-authenticated-user-name"
+    auth_trusted_team_name: str = "Hify"
+    auth_trusted_default_role: Literal["admin", "member", "viewer"] = "member"
