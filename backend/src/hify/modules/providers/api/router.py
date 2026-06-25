@@ -12,6 +12,7 @@ from hify.modules.providers.api.schemas import (
     ModelResponse,
     ProviderResponse,
     SetProviderModelPricingRequest,
+    UpdateProviderModelRequest,
 )
 from hify.modules.providers.application.commands.add_provider_model import (
     AddProviderModelCommand,
@@ -25,6 +26,10 @@ from hify.modules.providers.application.commands.set_provider_model_pricing impo
     SetProviderModelPricingCommand,
     SetProviderModelPricingHandler,
 )
+from hify.modules.providers.application.commands.update_provider_model import (
+    UpdateProviderModelCommand,
+    UpdateProviderModelHandler,
+)
 from hify.modules.providers.application.queries.list_models import (
     ListModelsForActorHandler,
     ListModelsForActorQuery,
@@ -37,6 +42,7 @@ def create_providers_router(
     *,
     create_provider_handler: CreateProviderHandler,
     add_provider_model_handler: AddProviderModelHandler,
+    update_provider_model_handler: UpdateProviderModelHandler,
     set_provider_model_pricing_handler: SetProviderModelPricingHandler,
     list_models_handler: ListModelsForActorHandler,
     request_authenticator: RequestAuthenticator,
@@ -109,6 +115,32 @@ def create_providers_router(
                 supports_structured_output=request.supports_structured_output,
             )
             model = await add_provider_model_handler.handle(command)
+            return _model_response(model)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except HifyError as exc:
+            raise _to_http_error(exc) from exc
+
+    @router.put(
+        "/models/{model_id}",
+        response_model=ModelResponse,
+    )
+    async def update_provider_model(
+        model_id: UUID,
+        request: UpdateProviderModelRequest,
+        actor: ActorContext = Depends(get_current_actor),
+    ) -> ModelResponse:
+        try:
+            command = UpdateProviderModelCommand(
+                actor=actor,
+                model_id=model_id,
+                display_name=request.display_name,
+                context_window_tokens=request.context_window_tokens,
+                supports_tools=request.supports_tools,
+                supports_vision=request.supports_vision,
+                supports_structured_output=request.supports_structured_output,
+            )
+            model = await update_provider_model_handler.handle(command)
             return _model_response(model)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

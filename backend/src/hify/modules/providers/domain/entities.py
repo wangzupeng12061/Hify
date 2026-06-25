@@ -190,6 +190,25 @@ class ProviderModel:
         )
         self._mark_updated(now)
 
+    def update_configuration(
+        self,
+        *,
+        display_name: str,
+        context_window_tokens: int,
+        supports_tools: bool,
+        supports_vision: bool,
+        supports_structured_output: bool,
+        now: datetime,
+    ) -> None:
+        if context_window_tokens < 1:
+            raise ProviderValidationError("context window tokens must be positive")
+        self.display_name = normalize_display_name(display_name)
+        self.context_window_tokens = context_window_tokens
+        self.supports_tools = supports_tools
+        self.supports_vision = supports_vision
+        self.supports_structured_output = supports_structured_output
+        self._mark_updated(now)
+
     def disable(self, *, now: datetime) -> None:
         if self.status == ModelStatus.DISABLED:
             return

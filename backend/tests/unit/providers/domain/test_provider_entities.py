@@ -71,3 +71,33 @@ def test_set_model_pricing_rejects_negative_price() -> None:
             price_per_1m_output_tokens=Decimal("1.00"),
             now=datetime(2026, 6, 22, tzinfo=UTC),
         )
+
+
+def test_update_model_configuration_changes_capabilities() -> None:
+    model = ProviderModel.create(
+        team_id=UUID("00000000-0000-7000-8000-000000000001"),
+        provider_id=UUID("00000000-0000-7000-8000-000000000002"),
+        model_name="deepseek-chat",
+        display_name="DeepSeek Chat",
+        kind=ModelKind.CHAT,
+        context_window_tokens=64000,
+        supports_tools=False,
+        supports_vision=False,
+        supports_structured_output=False,
+        now=datetime(2026, 6, 22, tzinfo=UTC),
+    )
+
+    model.update_configuration(
+        display_name="DeepSeek Chat Tooling",
+        context_window_tokens=128000,
+        supports_tools=True,
+        supports_vision=False,
+        supports_structured_output=True,
+        now=datetime(2026, 6, 23, tzinfo=UTC),
+    )
+
+    assert model.display_name == "DeepSeek Chat Tooling"
+    assert model.context_window_tokens == 128000
+    assert model.supports_tools
+    assert model.supports_structured_output
+    assert model.version == 1

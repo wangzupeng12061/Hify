@@ -21,6 +21,10 @@ from hify.modules.providers.application.commands.set_provider_model_pricing impo
     SetProviderModelPricingCommand,
     SetProviderModelPricingHandler,
 )
+from hify.modules.providers.application.commands.update_provider_model import (
+    UpdateProviderModelCommand,
+    UpdateProviderModelHandler,
+)
 from hify.modules.providers.application.queries.get_model import (
     GetModelPricingHandler,
     GetModelHandler,
@@ -351,6 +355,56 @@ async def test_set_provider_model_pricing_updates_catalog_pricing() -> None:
     assert pricing is not None
     assert pricing.price_per_1m_input_tokens == Decimal("2.00000000")
     assert pricing.price_per_1m_output_tokens == Decimal("8.12345679")
+    assert unit_of_work.committed
+
+
+@pytest.mark.asyncio
+async def test_update_provider_model_changes_runtime_capabilities() -> None:
+    unit_of_work = FakeProvidersUnitOfWork()
+    actor = actor_with_provider_permission()
+    provider = await CreateProviderHandler(
+        lambda: unit_of_work,
+        FakeCredentialEncryptor(),
+        FixedClock(),
+    ).handle(
+        CreateProviderCommand(
+            actor=actor,
+            provider_type="deepseek",
+            name="DeepSeek",
+            base_url=None,
+            credential_plaintext="secret",
+        )
+    )
+    model = await AddProviderModelHandler(lambda: unit_of_work, FixedClock()).handle(
+        AddProviderModelCommand(
+            actor=actor,
+            provider_id=provider.id,
+            model_name="deepseek-chat",
+            display_name="DeepSeek Chat",
+            kind="chat",
+            context_window_tokens=64000,
+            supports_tools=False,
+            supports_vision=False,
+            supports_structured_output=False,
+        )
+    )
+
+    updated = await UpdateProviderModelHandler(lambda: unit_of_work, FixedClock()).handle(
+        UpdateProviderModelCommand(
+            actor=actor,
+            model_id=model.id,
+            display_name="DeepSeek Chat Tooling",
+            context_window_tokens=128000,
+            supports_tools=True,
+            supports_vision=False,
+            supports_structured_output=True,
+        )
+    )
+
+    assert updated.display_name == "DeepSeek Chat Tooling"
+    assert updated.context_window_tokens == 128000
+    assert updated.supports_tools
+    assert updated.supports_structured_output
     assert unit_of_work.committed
 
 

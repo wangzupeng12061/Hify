@@ -15,6 +15,9 @@ from hify.modules.providers.application.commands.create_provider import CreatePr
 from hify.modules.providers.application.commands.set_provider_model_pricing import (
     SetProviderModelPricingHandler,
 )
+from hify.modules.providers.application.commands.update_provider_model import (
+    UpdateProviderModelHandler,
+)
 from hify.modules.providers.application.queries.get_model import (
     GetModelPricingHandler,
     GetModelHandler,
@@ -75,6 +78,7 @@ def create_providers_module(
         module_clock,
     )
     add_provider_model_handler = AddProviderModelHandler(unit_of_work_factory, module_clock)
+    update_provider_model_handler = UpdateProviderModelHandler(unit_of_work_factory, module_clock)
     set_provider_model_pricing_handler = SetProviderModelPricingHandler(
         unit_of_work_factory,
         module_clock,
@@ -95,6 +99,7 @@ def create_providers_module(
     router = create_providers_router(
         create_provider_handler=create_provider_handler,
         add_provider_model_handler=add_provider_model_handler,
+        update_provider_model_handler=update_provider_model_handler,
         set_provider_model_pricing_handler=set_provider_model_pricing_handler,
         list_models_handler=list_models_for_actor_handler,
         request_authenticator=request_authenticator or AuthenticationNotConfiguredAuthenticator(),

@@ -49,6 +49,13 @@ def test_team_membership_permissions_follow_role() -> None:
     assert not membership.has_permission(IdentityPermission.MANAGE_MEMBERS)
 
 
+def test_admin_can_read_tools_when_managing_tools() -> None:
+    assert IdentityPermission.MANAGE_TOOLS in TeamRole.OWNER.permissions
+    assert IdentityPermission.READ_TOOLS in TeamRole.OWNER.permissions
+    assert IdentityPermission.MANAGE_TOOLS in TeamRole.ADMIN.permissions
+    assert IdentityPermission.READ_TOOLS in TeamRole.ADMIN.permissions
+
+
 def test_email_rejects_invalid_address() -> None:
     with pytest.raises(IdentityValidationError, match="email"):
         EmailAddress.parse("not-an-email")
