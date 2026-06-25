@@ -26,7 +26,7 @@ from hify.modules.runs.application.queries.list_run_events import (
 )
 from hify.modules.runs.contracts.services import RunReader
 from hify.modules.runs.infrastructure.database.uow import SqlAlchemyRunsUnitOfWork
-from hify.modules.tools.contracts.services import ToolExecutor
+from hify.modules.tools.contracts.services import ToolCatalog, ToolExecutor
 from hify.modules.usage.contracts.services import UsageQuotaChecker, UsageReader, UsageRecorder
 from hify.shared.domain.clock import Clock, SystemClock
 
@@ -45,6 +45,7 @@ def create_runs_module(
     conversation_writer: ConversationWriter,
     agent_catalog: AgentCatalog,
     model_gateway: ModelGateway,
+    tool_catalog: ToolCatalog,
     tool_executor: ToolExecutor,
     knowledge_retriever: KnowledgeRetriever,
     usage_recorder: UsageRecorder,
@@ -82,6 +83,7 @@ def create_runs_module(
         knowledge_retriever,
         usage_recorder,
         module_clock,
+        tool_catalog=tool_catalog,
     )
     router = create_runs_router(
         create_run_handler=create_run_handler,

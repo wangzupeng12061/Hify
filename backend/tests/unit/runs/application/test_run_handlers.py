@@ -55,7 +55,7 @@ from hify.modules.runs.application.queries.list_run_events import (
 from hify.modules.runs.domain.entities import AgentRun, RunEvent, RunStep
 from hify.modules.runs.domain.errors import RunPermissionDeniedError
 from hify.modules.runs.domain.value_objects import RunEventType, RunStepType
-from hify.modules.tools.contracts.dto import ToolExecutionRequest, ToolExecutionResult
+from hify.modules.tools.contracts.dto import ToolExecutionRequest, ToolExecutionResult, ToolInfo
 from hify.modules.tools.contracts.errors import ToolExecutionHttpError
 from hify.modules.usage.contracts.dto import UsageQuotaStatusInfo, UsageRecordInfo, UsageSummaryInfo
 from hify.modules.usage.contracts.errors import UsageContractError, UsageQuotaExceededError
@@ -551,6 +551,22 @@ class RecordingToolExecutor:
         )
 
 
+class FakeToolCatalog:
+    def __init__(self, tools: tuple[ToolInfo, ...] = ()) -> None:
+        self.tools = tools
+        self.requests: list[UUID] = []
+
+    async def get_tool(self, *, team_id: UUID, tool_id: UUID) -> ToolInfo:
+        for tool in self.tools:
+            if tool.team_id == team_id and tool.id == tool_id:
+                return tool
+        raise AssertionError("unexpected tool lookup")
+
+    async def list_tools(self, *, team_id: UUID) -> tuple[ToolInfo, ...]:
+        self.requests.append(team_id)
+        return tuple(tool for tool in self.tools if tool.team_id == team_id)
+
+
 class RecordingKnowledgeRetriever:
     def __init__(self, chunks: tuple[RetrievedChunk, ...] = ()) -> None:
         self.chunks = chunks
@@ -910,6 +926,94 @@ async def test_run_executor_streams_model_chunks_into_run_events() -> None:
         "step.succeeded",
         "run.succeeded",
     ]
+
+
+@pytest.mark.asyncio
+async def test_run_executor_injects_active_tool_definitions_for_tool_capable_model() -> None:
+    unit_of_work = FakeRunsUnitOfWork()
+    actor = actor_with_run_permissions()
+    conversation = conversation_for_actor(actor)
+    run = await _create_run(unit_of_work, actor)
+    tool_id = UUID("00000000-0000-7000-8000-000000000011")
+    tool_catalog = FakeToolCatalog(
+        (
+            ToolInfo(
+                id=tool_id,
+                team_id=actor.team_id,
+                name="Web Search",
+                description="Search current public web information.",
+                tool_kind="builtin",
+                status="active",
+                input_schema={
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {"query": {"type": "string"}},
+                },
+                builtin_name="web.search",
+                endpoint_url=None,
+                http_method=None,
+                http_headers={},
+                mcp_server_id=None,
+                mcp_tool_id=None,
+                mcp_tool_name=None,
+                created_at=FixedClock().now(),
+                updated_at=FixedClock().now(),
+            ),
+            ToolInfo(
+                id=UUID("00000000-0000-7000-8000-000000000012"),
+                team_id=actor.team_id,
+                name="Disabled Search",
+                description=None,
+                tool_kind="builtin",
+                status="disabled",
+                input_schema={"type": "object"},
+                builtin_name="web.search",
+                endpoint_url=None,
+                http_method=None,
+                http_headers={},
+                mcp_server_id=None,
+                mcp_tool_id=None,
+                mcp_tool_name=None,
+                created_at=FixedClock().now(),
+                updated_at=FixedClock().now(),
+            ),
+        )
+    )
+    gateway = RecordingModelGateway((DoneChunk(chunk_type="done", finish_reason="stop"),))
+    executor = RunExecutor(
+        lambda: unit_of_work,
+        FakeConversationReader(conversation),
+        RecordingConversationWriter(),
+        FakeAgentCatalog(agent_version_for_conversation(conversation)),
+        gateway,
+        RecordingToolExecutor(),
+        RecordingKnowledgeRetriever(),
+        RecordingUsageRecorder(),
+        FixedClock(),
+        tool_catalog=tool_catalog,
+    )
+
+    result = await executor.execute(ExecuteRunCommand(run_id=run.id))
+
+    assert result.status == "succeeded"
+    assert tool_catalog.requests == [actor.team_id]
+    assert gateway.requests[0].tools == (
+        {
+            "type": "function",
+            "function": {
+                "name": str(tool_id),
+                "description": (
+                    "Use the Hify tool named 'Web Search'. Target: web.search. "
+                    "Search current public web information."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {"query": {"type": "string"}},
+                },
+            },
+        },
+    )
 
 
 @pytest.mark.asyncio

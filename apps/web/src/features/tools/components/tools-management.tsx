@@ -47,6 +47,26 @@ const initialBuiltinToolForm: BuiltinToolFormState = {
   name: "",
 };
 
+const webSearchBuiltinToolForm: BuiltinToolFormState = {
+  builtinName: "web.search",
+  description: "Search current public web information and return concise source results.",
+  inputSchema: `{
+  "type": "object",
+  "required": ["query"],
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Search query for current public web information."
+    },
+    "max_results": {
+      "type": "integer",
+      "description": "Maximum number of results to return. Defaults to 5."
+    }
+  }
+}`,
+  name: "Web Search",
+};
+
 const EMPTY_TOOLS: Tool[] = [];
 
 export function ToolsManagement() {
@@ -134,6 +154,7 @@ export function ToolsManagement() {
           form={builtinToolForm}
           isSubmitting={createToolMutation.isPending}
           onChange={setBuiltinToolForm}
+          onUseWebSearchPreset={() => setBuiltinToolForm(webSearchBuiltinToolForm)}
           onSubmit={handleCreateBuiltinTool}
         />
       </section>
@@ -234,17 +255,22 @@ function CreateBuiltinToolForm({
   form,
   isSubmitting,
   onChange,
+  onUseWebSearchPreset,
   onSubmit,
 }: {
   form: BuiltinToolFormState;
   isSubmitting: boolean;
   onChange: (form: BuiltinToolFormState) => void;
+  onUseWebSearchPreset: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
     <form className="panel form-panel" onSubmit={onSubmit}>
       <p className="panel__eyebrow">Builtin tool</p>
       <h2>Create builtin tool</h2>
+      <button className="button button--secondary" onClick={onUseWebSearchPreset} type="button">
+        Use Web Search preset
+      </button>
       <label className="form-field">
         Tool name
         <input

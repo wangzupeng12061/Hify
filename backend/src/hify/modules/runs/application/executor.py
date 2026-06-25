@@ -40,8 +40,8 @@ from hify.modules.runs.contracts.dto import RunInfo
 from hify.modules.runs.domain.entities import AgentRun, RunStep
 from hify.modules.runs.domain.errors import RunNotFoundError, RunStateConflictError
 from hify.modules.runs.domain.value_objects import RunEventType, RunStatus, RunStepType
-from hify.modules.tools.contracts.dto import ToolExecutionRequest
-from hify.modules.tools.contracts.services import ToolExecutor
+from hify.modules.tools.contracts.dto import ToolExecutionRequest, ToolInfo
+from hify.modules.tools.contracts.services import ToolCatalog, ToolExecutor
 from hify.modules.usage.contracts.services import UsageRecorder
 from hify.shared.domain.clock import Clock
 from hify.shared.domain.errors import HifyError
@@ -147,6 +147,7 @@ class RunExecutor:
         usage_recorder: UsageRecorder,
         clock: Clock,
         *,
+        tool_catalog: ToolCatalog | None = None,
         run_timeout_seconds: int = 600,
         max_tool_iterations: int = MAX_TOOL_ITERATIONS,
     ) -> None:
@@ -156,6 +157,7 @@ class RunExecutor:
         self._agent_catalog = agent_catalog
         self._model_gateway = model_gateway
         self._tool_executor = tool_executor
+        self._tool_catalog = tool_catalog
         self._knowledge_retriever = knowledge_retriever
         self._usage_recorder = usage_recorder
         self._clock = clock
@@ -200,6 +202,7 @@ class RunExecutor:
                 cancellation=cancellation,
             )
 
+        model_tools = await self._model_tools_for_run(run.team_id, agent_version)
         step = await self._create_step(run.id, RunStepType.LLM_CALL, "Model call", {})
         try:
             for iteration_index in range(self._max_tool_iterations + 1):
@@ -207,6 +210,7 @@ class RunExecutor:
                     model_id=agent_version.provider_model_id,
                     messages=tuple(messages),
                     system_prompt=system_prompt,
+                    tools=model_tools,
                 )
                 stream_result = await self._stream_model_request(
                     run=run,
@@ -654,6 +658,16 @@ class RunExecutor:
             output_text="".join(output_text_parts),
         )
 
+    async def _model_tools_for_run(
+        self,
+        team_id: UUID,
+        agent_version: AgentVersionInfo,
+    ) -> tuple[Mapping[str, object], ...]:
+        if not agent_version.supports_tools or self._tool_catalog is None:
+            return ()
+        tools = await self._tool_catalog.list_tools(team_id=team_id)
+        return tuple(_model_tool_from_tool(tool) for tool in tools if tool.status == "active")
+
     async def _record_model_usage(
         self,
         *,
@@ -995,6 +1009,28 @@ def _event_type_for_chunk(chunk: ModelChunk) -> RunEventType:
     if isinstance(chunk, TextDeltaChunk):
         return RunEventType.OUTPUT_TEXT_DELTA
     return RunEventType.DIAGNOSTIC
+
+
+def _model_tool_from_tool(tool: ToolInfo) -> Mapping[str, object]:
+    return {
+        "type": "function",
+        "function": {
+            "name": str(tool.id),
+            "description": _model_tool_description(tool),
+            "parameters": dict(tool.input_schema),
+        },
+    }
+
+
+def _model_tool_description(tool: ToolInfo) -> str:
+    target = tool.builtin_name or tool.mcp_tool_name or tool.endpoint_url or tool.tool_kind
+    description_parts = [
+        f"Use the Hify tool named '{tool.name}'.",
+        f"Target: {target}.",
+    ]
+    if tool.description:
+        description_parts.append(tool.description)
+    return " ".join(description_parts)[:1000]
 
 
 def _payload_for_chunk(chunk: ModelChunk) -> dict[str, object]:

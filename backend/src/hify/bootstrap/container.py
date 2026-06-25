@@ -84,6 +84,9 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         mcp_tool_discovery=mcp.mcp_tool_discovery,
         mcp_tool_invoker=mcp.mcp_tool_invoker,
         request_authenticator=identity.request_authenticator,
+        web_search_enabled=resolved_settings.web_search_enabled,
+        web_search_timeout_seconds=resolved_settings.web_search_timeout_seconds,
+        web_search_max_results=resolved_settings.web_search_max_results,
     )
     workflows = create_workflows_module(
         session_factory,
@@ -114,6 +117,7 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         conversation_writer=conversations.conversation_writer,
         agent_catalog=agents.agent_catalog,
         model_gateway=providers.model_gateway,
+        tool_catalog=tools.tool_catalog,
         tool_executor=tools.tool_executor,
         knowledge_retriever=knowledge.knowledge_retriever,
         usage_recorder=usage.usage_recorder,

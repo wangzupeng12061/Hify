@@ -37,6 +37,7 @@ export function ConversationDetail({ conversationId }: { conversationId: string 
     [runEventsQuery.data?.items, streamedEvents],
   );
   const assistantOutput = useMemo(() => getAssistantOutput(events), [events]);
+  const toolActivities = useMemo(() => getToolActivities(events), [events]);
   const operationError =
     conversationQuery.error ??
     messagesQuery.error ??
@@ -123,6 +124,7 @@ export function ConversationDetail({ conversationId }: { conversationId: string 
       />
 
       <AssistantOutputPanel assistantOutput={assistantOutput} streamStatus={runStream.status} />
+      <ToolActivityPanel activities={toolActivities} />
       <ConversationMessages isLoading={messagesQuery.isFetching} messages={messages} />
     </div>
   );
@@ -185,6 +187,40 @@ function AssistantOutputPanel({
         <div className="assistant-output">{assistantOutput}</div>
       ) : (
         <p className="muted">No assistant output streamed yet.</p>
+      )}
+    </section>
+  );
+}
+
+type ToolActivity = {
+  detail: string;
+  key: string;
+  status: string;
+  title: string;
+};
+
+function ToolActivityPanel({ activities }: { activities: ToolActivity[] }) {
+  return (
+    <section className="panel">
+      <div className="panel__header">
+        <div>
+          <p className="panel__eyebrow">Tools</p>
+          <h2>Tool activity</h2>
+        </div>
+        <span className="status-pill">{`${activities.length} events`}</span>
+      </div>
+      {activities.length === 0 ? (
+        <p className="muted">No tool activity for this run yet.</p>
+      ) : (
+        <ol className="timeline-list">
+          {activities.map((activity) => (
+            <li className="timeline-list__item" key={activity.key}>
+              <span>{activity.status}</span>
+              <p>{activity.title}</p>
+              <p className="muted">{activity.detail}</p>
+            </li>
+          ))}
+        </ol>
       )}
     </section>
   );
@@ -275,4 +311,61 @@ function getAssistantOutput(events: RunEvent[]): string {
     .map((event) => event.payload.text)
     .filter((text): text is string => typeof text === "string")
     .join("");
+}
+
+function getToolActivities(events: RunEvent[]): ToolActivity[] {
+  return events.flatMap((event) => {
+    const chunkType = payloadString(event, "chunk_type");
+    if (event.event_type === "step.started" && payloadString(event, "step_type") === "tool_call") {
+      return [
+        {
+          detail: `Tool ID: ${payloadString(event, "tool_id") ?? "unknown"}`,
+          key: `${event.id}:started`,
+          status: "requested",
+          title: "Tool call started",
+        },
+      ];
+    }
+
+    if (chunkType === "tool_call_delta") {
+      return [
+        {
+          detail: truncate(payloadString(event, "arguments_delta") ?? "Waiting for arguments", 160),
+          key: `${event.id}:delta`,
+          status: "planning",
+          title: `Model requested tool ${payloadString(event, "name") ?? "unknown"}`,
+        },
+      ];
+    }
+
+    if (chunkType === "tool_result") {
+      return [
+        {
+          detail: `Result size: ${payloadNumber(event, "content_size") ?? 0} characters`,
+          key: `${event.id}:result`,
+          status: "completed",
+          title: `Tool result for ${payloadString(event, "tool_id") ?? "unknown"}`,
+        },
+      ];
+    }
+
+    return [];
+  });
+}
+
+function payloadString(event: RunEvent, key: string): string | null {
+  const value = event.payload[key];
+  return typeof value === "string" ? value : null;
+}
+
+function payloadNumber(event: RunEvent, key: string): number | null {
+  const value = event.payload[key];
+  return typeof value === "number" ? value : null;
+}
+
+function truncate(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength - 3)}...`;
 }
