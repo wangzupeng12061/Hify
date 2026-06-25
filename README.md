@@ -80,3 +80,7 @@ basic RAG, run logs, team access control, and usage limits.
 The first release does not include a visual workflow editor, plugin marketplace,
 arbitrary code execution, multiple vector database adapters, or a general-purpose
 workflow engine beyond the agent runtime.
+
+## Roadmap
+
+- [Phase two development plan](docs/roadmap/phase-two-development-plan.md)
