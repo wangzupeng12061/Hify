@@ -68,7 +68,8 @@ export function UserChatWorkspace() {
     [runEventsQuery.data?.items, streamedEvents],
   );
   const assistantOutput = useMemo(() => getAssistantOutput(events), [events]);
-  const toolActivities = useMemo(() => getToolActivities(events), [events]);
+  const runActivities = useMemo(() => getRunActivities(events), [events]);
+  const sourceReferences = useMemo(() => getSourceReferences(events), [events]);
   const messages = conversationMessagesQuery.data?.items ?? localMessages;
   const isSubmitting =
     createConversationMutation.isPending ||
@@ -93,7 +94,7 @@ export function UserChatWorkspace() {
       return;
     }
     chatThreadEndRef.current?.scrollIntoView?.({ block: "end", behavior: "smooth" });
-  }, [assistantOutput, messages.length, settings.autoScroll, toolActivities.length]);
+  }, [assistantOutput, messages.length, settings.autoScroll, runActivities.length]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -195,8 +196,8 @@ export function UserChatWorkspace() {
               endRef={chatThreadEndRef}
               isLoading={conversationMessagesQuery.isFetching}
               messages={messages}
+              sourceReferences={sourceReferences}
               streamStatus={runStream.status}
-              toolActivities={settings.showToolActivity ? toolActivities : []}
             />
           ) : (
             <ChatHome
@@ -213,6 +214,12 @@ export function UserChatWorkspace() {
           value={composerValue}
         />
       </section>
+      <ChatActivityPanel
+        activities={settings.showToolActivity ? runActivities : []}
+        run={run}
+        sources={sourceReferences}
+        streamStatus={runStream.status}
+      />
     </div>
   );
 }
@@ -333,15 +340,15 @@ function MessageTimeline({
   endRef,
   isLoading,
   messages,
+  sourceReferences,
   streamStatus,
-  toolActivities,
 }: {
   assistantOutput: string;
   endRef: RefObject<HTMLDivElement | null>;
   isLoading: boolean;
   messages: ConversationMessage[];
+  sourceReferences: SourceReference[];
   streamStatus: string;
-  toolActivities: ToolActivity[];
 }) {
   return (
     <div className="chat-thread">
@@ -352,11 +359,11 @@ function MessageTimeline({
       {messages.map((message) => (
         <MessageBubble key={message.id} message={message} />
       ))}
-      {toolActivities.length > 0 ? <ToolActivityCard activities={toolActivities} /> : null}
       {assistantOutput ? (
         <div className="message-bubble message-bubble--assistant">
           <span>Assistant · {streamStatus}</span>
           <p>{assistantOutput}</p>
+          {sourceReferences.length > 0 ? <SourceChips sources={sourceReferences} /> : null}
         </div>
       ) : null}
       <div ref={endRef} />
@@ -381,18 +388,93 @@ type ToolActivity = {
   title: string;
 };
 
-function ToolActivityCard({ activities }: { activities: ToolActivity[] }) {
+type SourceReference = {
+  key: string;
+  provider: string | null;
+  snippet: string | null;
+  sourceType: string;
+  title: string;
+  url: string | null;
+};
+
+function ChatActivityPanel({
+  activities,
+  run,
+  sources,
+  streamStatus,
+}: {
+  activities: ToolActivity[];
+  run: Run | null;
+  sources: SourceReference[];
+  streamStatus: string;
+}) {
   return (
-    <div className="tool-activity-card">
-      <span>Agent activity</span>
-      {activities.map((activity) => (
-        <div className="tool-activity-card__item" key={activity.key}>
-          <strong>{activity.status}</strong>
-          <p>{activity.title}</p>
-          <small>{activity.detail}</small>
+    <aside className="chat-activity-panel" aria-label="Run activity">
+      <div className="chat-activity-panel__header">
+        <div>
+          <p>活动</p>
+          <strong>{streamStatus}</strong>
         </div>
-      ))}
+        <span>{activities.length + sources.length}</span>
+      </div>
+      {run ? <p className="chat-activity-panel__run">Run {run.id.slice(0, 8)}</p> : null}
+      <section className="chat-activity-panel__section">
+        <h3>执行过程</h3>
+        {activities.length === 0 ? <p className="chat-activity-panel__empty">暂无活动。</p> : null}
+        <div className="activity-timeline">
+          {activities.map((activity) => (
+            <div className="activity-timeline__item" key={activity.key}>
+              <span>{activity.status}</span>
+              <strong>{activity.title}</strong>
+              <p>{activity.detail}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="chat-activity-panel__section">
+        <h3>来源</h3>
+        {sources.length === 0 ? <p className="chat-activity-panel__empty">暂无来源。</p> : null}
+        <div className="source-list">
+          {sources.map((source) => (
+            <SourceCard key={source.key} source={source} />
+          ))}
+        </div>
+      </section>
+    </aside>
+  );
+}
+
+function SourceChips({ sources }: { sources: SourceReference[] }) {
+  return (
+    <div className="source-chips" aria-label="Sources">
+      {sources.map((source) =>
+        source.url ? (
+          <a href={source.url} key={source.key} rel="noreferrer" target="_blank">
+            {source.provider ?? source.sourceType}
+          </a>
+        ) : (
+          <span key={source.key}>{source.provider ?? source.sourceType}</span>
+        ),
+      )}
     </div>
+  );
+}
+
+function SourceCard({ source }: { source: SourceReference }) {
+  const title = source.url ? (
+    <a href={source.url} rel="noreferrer" target="_blank">
+      {source.title}
+    </a>
+  ) : (
+    <span>{source.title}</span>
+  );
+
+  return (
+    <article className="source-card">
+      <strong>{title}</strong>
+      <small>{source.provider ?? source.sourceType}</small>
+      {source.snippet ? <p>{source.snippet}</p> : null}
+    </article>
   );
 }
 
@@ -480,9 +562,21 @@ function getAssistantOutput(events: RunEvent[]): string {
     .join("");
 }
 
-function getToolActivities(events: RunEvent[]): ToolActivity[] {
+function getRunActivities(events: RunEvent[]): ToolActivity[] {
   return events.flatMap((event) => {
     const chunkType = payloadString(event, "chunk_type");
+    if (event.event_type === "activity.started" || event.event_type === "activity.completed") {
+      return [
+        {
+          detail: payloadString(event, "detail") ?? "",
+          key: `${event.id}:activity`,
+          status:
+            payloadString(event, "status") ??
+            (event.event_type === "activity.completed" ? "completed" : "started"),
+          title: payloadString(event, "title") ?? "Agent activity",
+        },
+      ];
+    }
     if (event.event_type === "step.started" && payloadString(event, "step_type") === "tool_call") {
       return [
         {
@@ -515,6 +609,34 @@ function getToolActivities(events: RunEvent[]): ToolActivity[] {
     }
     return [];
   });
+}
+
+function getSourceReferences(events: RunEvent[]): SourceReference[] {
+  const sourceByKey = new Map<string, SourceReference>();
+  events.forEach((event) => {
+    if (event.event_type !== "source.discovered") {
+      return;
+    }
+    const url = payloadString(event, "url");
+    const title = payloadString(event, "title");
+    const sourceType = payloadString(event, "source_type") ?? "source";
+    if (!title) {
+      return;
+    }
+    const key = url ?? `${event.run_id}:${event.sequence_number}`;
+    if (sourceByKey.has(key)) {
+      return;
+    }
+    sourceByKey.set(key, {
+      key,
+      provider: payloadString(event, "provider"),
+      snippet: payloadString(event, "snippet"),
+      sourceType,
+      title,
+      url,
+    });
+  });
+  return [...sourceByKey.values()];
 }
 
 function payloadString(event: RunEvent, key: string): string | null {

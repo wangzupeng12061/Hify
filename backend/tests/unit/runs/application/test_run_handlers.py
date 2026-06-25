@@ -536,8 +536,16 @@ class SequencedModelGateway:
 
 
 class RecordingToolExecutor:
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        error: Exception | None = None,
+        *,
+        content: str = "tool result",
+        metadata: dict[str, object] | None = None,
+    ) -> None:
         self.error = error
+        self.content = content
+        self.metadata = metadata or {"ok": True}
         self.requests: list[ToolExecutionRequest] = []
 
     async def execute_tool(self, request: ToolExecutionRequest) -> ToolExecutionResult:
@@ -546,8 +554,8 @@ class RecordingToolExecutor:
             raise self.error
         return ToolExecutionResult(
             tool_call_id=request.tool_call_id,
-            content="tool result",
-            metadata={"ok": True},
+            content=self.content,
+            metadata=self.metadata,
         )
 
 
@@ -1312,6 +1320,9 @@ async def test_run_executor_retrieves_knowledge_and_injects_context() -> None:
     assert "Restart the API by rolling the api deployment." in (gateway.requests[0].system_prompt or "")
     assert [step.step_type.value for step in steps] == ["retrieval", "llm_call"]
     assert "retrieval_result" in [event.payload.get("chunk_type") for event in events]
+    assert "activity.started" in [event.event_type.value for event in events]
+    assert "activity.completed" in [event.event_type.value for event in events]
+    assert "source.discovered" in [event.event_type.value for event in events]
 
 
 @pytest.mark.asyncio
@@ -1339,7 +1350,13 @@ async def test_run_executor_executes_tool_calls_and_continues_model_loop() -> No
             ),
         )
     )
-    tool_executor = RecordingToolExecutor()
+    tool_executor = RecordingToolExecutor(
+        content=(
+            '{"results":[{"title":"Ceph releases","url":"https://docs.ceph.com/releases",'
+            '"snippet":"Release notes"}]}'
+        ),
+        metadata={"provider": "duckduckgo"},
+    )
     conversation_writer = RecordingConversationWriter()
     usage_recorder = RecordingUsageRecorder()
     executor = RunExecutor(
@@ -1374,9 +1391,15 @@ async def test_run_executor_executes_tool_calls_and_continues_model_loop() -> No
         arguments={"email": "owner@example.com"},
     )
     assert gateway.requests[1].messages[-1].role == "tool"
-    assert gateway.requests[1].messages[-1].content == "tool result"
+    assert gateway.requests[1].messages[-1].content == (
+        '{"results":[{"title":"Ceph releases","url":"https://docs.ceph.com/releases",'
+        '"snippet":"Release notes"}]}'
+    )
     assert [step.step_type.value for step in steps] == ["llm_call", "tool_call", "llm_call"]
     assert "tool_result" in [event.payload.get("chunk_type") for event in events]
+    source_events = [event for event in events if event.event_type.value == "source.discovered"]
+    assert source_events[0].payload["title"] == "Ceph releases"
+    assert source_events[0].payload["url"] == "https://docs.ceph.com/releases"
 
 
 @pytest.mark.asyncio
