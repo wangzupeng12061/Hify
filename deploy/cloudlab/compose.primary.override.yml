@@ -1,0 +1,22 @@
+services:
+  postgres:
+    ports: !override
+      - "10.10.1.1:5432:5432"
+
+  redis:
+    ports: !override
+      - "10.10.1.1:6379:6379"
+
+  api:
+    ports: !override
+      - "10.10.1.1:8000:8000"
+
+  web:
+    ports: !override
+      - "10.10.1.1:3001:3000"
+
+  reverse-proxy:
+    ports: !override
+      - "127.0.0.1:80:80"
+    volumes: !override
+      - /users/wzp/hify-prod/config/nginx.conf:/etc/nginx/conf.d/default.conf:ro
