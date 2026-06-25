@@ -413,6 +413,35 @@
         "title": "AuthSessionResponse",
         "type": "object"
       },
+      "BootstrapFirstAdminRequest": {
+        "properties": {
+          "display_name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          },
+          "team_name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Team Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "display_name",
+          "team_name"
+        ],
+        "title": "BootstrapFirstAdminRequest",
+        "type": "object"
+      },
       "ConversationMessagePageResponse": {
         "properties": {
           "has_more": {
@@ -2548,6 +2577,42 @@
         "title": "ToolResponse",
         "type": "object"
       },
+      "UpdateProviderModelRequest": {
+        "properties": {
+          "context_window_tokens": {
+            "minimum": 1.0,
+            "title": "Context Window Tokens",
+            "type": "integer"
+          },
+          "display_name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "supports_structured_output": {
+            "default": false,
+            "title": "Supports Structured Output",
+            "type": "boolean"
+          },
+          "supports_tools": {
+            "default": false,
+            "title": "Supports Tools",
+            "type": "boolean"
+          },
+          "supports_vision": {
+            "default": false,
+            "title": "Supports Vision",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "display_name",
+          "context_window_tokens"
+        ],
+        "title": "UpdateProviderModelRequest",
+        "type": "object"
+      },
       "UpdateWorkflowDraftRequest": {
         "properties": {
           "draft_definition": {
@@ -3437,6 +3502,115 @@
         "summary": "Publish Agent",
         "tags": [
           "agents"
+        ]
+      }
+    },
+    "/auth/bootstrap/first-admin": {
+      "post": {
+        "operationId": "auth_bootstrap_first_admin",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BootstrapFirstAdminRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Permission denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bootstrap First Admin",
+        "tags": [
+          "auth"
         ]
       }
     },
@@ -6162,6 +6336,109 @@
           }
         },
         "summary": "List Provider Models",
+        "tags": [
+          "providers"
+        ]
+      }
+    },
+    "/providers/models/{model_id}": {
+      "put": {
+        "operationId": "providers_update_provider_model",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProviderModelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Permission denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Provider Model",
         "tags": [
           "providers"
         ]

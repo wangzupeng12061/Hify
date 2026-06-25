@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from hify.modules.identity.contracts.dto import ActorContext
 from hify.modules.runs.api.router import create_runs_router
+from hify.modules.runs.api.router import _stream_run_execution
 from hify.modules.runs.application.executor import ExecuteRunCommand
 from hify.modules.runs.application.queries.list_run_events import ListRunEventsForActorQuery
 from hify.modules.runs.contracts.dto import RunEventInfo, RunEventPage, RunInfo
@@ -73,6 +75,25 @@ class RecordingListEventsHandler:
         return RunEventPage(items=items[: query.limit], next_cursor=None, has_more=False)
 
 
+class DisconnectingRequest:
+    async def is_disconnected(self) -> bool:
+        return True
+
+
+class CancellationAwareRunExecutor:
+    def __init__(self, events: list[RunEventInfo]) -> None:
+        self.events = events
+        self.cancelled = False
+
+    async def execute(self, command: ExecuteRunCommand) -> RunInfo:
+        assert command.cancellation is not None
+        while not command.cancellation.is_cancelled():
+            await asyncio.sleep(0)
+        self.cancelled = True
+        self.events.append(_run_event(sequence_number=1, event_type="run.cancelled"))
+        return _run_info("cancelled")
+
+
 def test_execute_stream_returns_run_events_as_sse() -> None:
     events: list[RunEventInfo] = []
     run_executor = RecordingRunExecutor(events)
@@ -103,6 +124,29 @@ def test_execute_stream_returns_run_events_as_sse() -> None:
     assert run_executor.prepare_commands[0].actor is not None
     assert run_executor.execute_commands[0].cancellation is not None
     assert list_events_handler.queries[0].actor.has_permission("runs.read")
+
+
+def test_stream_disconnect_requests_executor_cancellation_before_force_cancel() -> None:
+    async def run_stream() -> tuple[list[str], CancellationAwareRunExecutor]:
+        events: list[RunEventInfo] = []
+        run_executor = CancellationAwareRunExecutor(events)
+        list_events_handler = RecordingListEventsHandler(events)
+        actor = await StaticAuthenticator().authenticate(object())
+        chunks: list[str] = []
+        async for chunk in _stream_run_execution(
+            request=DisconnectingRequest(),
+            actor=actor,
+            run_id=RUN_ID,
+            run_executor=run_executor,
+            list_events_handler=list_events_handler,
+        ):
+            chunks.append(chunk)
+        return chunks, run_executor
+
+    chunks, run_executor = asyncio.run(run_stream())
+
+    assert chunks == []
+    assert run_executor.cancelled
 
 
 def _run_event(

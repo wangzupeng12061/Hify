@@ -16,6 +16,7 @@ class IdentityPermission(StrEnum):
     READ_RUNS = "runs.read"
     MANAGE_KNOWLEDGE = "knowledge.manage"
     MANAGE_TOOLS = "tools.manage"
+    READ_TOOLS = "tools.read"
     READ_USAGE = "usage.read"
     MANAGE_USAGE = "usage.manage"
 
@@ -58,6 +59,7 @@ ROLE_PERMISSIONS: dict[TeamRole, frozenset[IdentityPermission]] = {
             IdentityPermission.READ_RUNS,
             IdentityPermission.MANAGE_KNOWLEDGE,
             IdentityPermission.MANAGE_TOOLS,
+            IdentityPermission.READ_TOOLS,
             IdentityPermission.READ_USAGE,
             IdentityPermission.MANAGE_USAGE,
         }

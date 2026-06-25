@@ -37,6 +37,14 @@ class SetProviderModelPricingRequest(BaseModel):
     price_per_1m_output_tokens: Decimal | None = Field(default=None, ge=0)
 
 
+class UpdateProviderModelRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=160)
+    context_window_tokens: int = Field(ge=1)
+    supports_tools: bool = False
+    supports_vision: bool = False
+    supports_structured_output: bool = False
+
+
 class ModelResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

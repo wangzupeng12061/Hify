@@ -40,6 +40,7 @@ from hify.shared.domain.errors import ConflictError, HifyError, NotFoundError, P
 SSE_EVENT_PAGE_LIMIT = 50
 SSE_POLL_INTERVAL_SECONDS = 0.1
 SSE_HEARTBEAT_SECONDS = 15.0
+SSE_DISCONNECT_SHUTDOWN_GRACE_SECONDS = 5.0
 TERMINAL_RUN_EVENT_TYPES = frozenset(
     {
         "run.succeeded",
@@ -202,8 +203,7 @@ async def _stream_run_execution(
     try:
         while True:
             if await request.is_disconnected():
-                cancellation.cancel()
-                task.cancel()
+                await _request_execution_shutdown(task, cancellation)
                 break
 
             page = await list_events_handler.handle(
@@ -236,16 +236,32 @@ async def _stream_run_execution(
             await asyncio.sleep(SSE_POLL_INTERVAL_SECONDS)
     finally:
         if not task.done():
-            cancellation.cancel()
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+            await _request_execution_shutdown(task, cancellation)
         elif terminal_event_seen:
             await _observe_execution_task(task)
 
 
 async def _observe_execution_task(task: asyncio.Task[RunInfo]) -> None:
     await task
+
+
+async def _request_execution_shutdown(
+    task: asyncio.Task[RunInfo],
+    cancellation: RunCancellationToken,
+) -> None:
+    cancellation.cancel()
+    if task.done():
+        await _observe_execution_task(task)
+        return
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(task),
+            timeout=SSE_DISCONNECT_SHUTDOWN_GRACE_SECONDS,
+        )
+    except TimeoutError:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 def _encode_sse_event(event: RunEventInfo) -> str:
