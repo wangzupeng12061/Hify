@@ -170,8 +170,7 @@ class RunEventModel(Base):
             "event_type IN ("
             "'run.created', 'run.started', 'run.succeeded', 'run.failed', "
             "'run.cancelled', 'run.interrupted', 'step.started', 'step.succeeded', "
-            "'step.failed', 'output.text_delta', 'diagnostic', "
-            "'activity.started', 'activity.completed', 'source.discovered'"
+            "'step.failed', 'output.text_delta', 'diagnostic'"
             ")",
             name="ck_runs_events__event_type",
         ),

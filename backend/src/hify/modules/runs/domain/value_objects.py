@@ -41,9 +41,6 @@ class RunEventType(StrEnum):
     STEP_FAILED = "step.failed"
     OUTPUT_TEXT_DELTA = "output.text_delta"
     DIAGNOSTIC = "diagnostic"
-    ACTIVITY_STARTED = "activity.started"
-    ACTIVITY_COMPLETED = "activity.completed"
-    SOURCE_DISCOVERED = "source.discovered"
 
 
 TERMINAL_RUN_STATUSES = frozenset(
