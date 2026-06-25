@@ -38,6 +38,8 @@ not Kubernetes.
 
 ## Production Notes
 
+- The current three-node CloudLab production rollout is documented and
+  automated under `deploy/cloudlab/`.
 - Run `migration` as a one-shot job before rolling API and Worker containers.
 - Expose only the reverse proxy or platform load balancer to the public network.
 - Set `HIFY_DEPLOYMENT_MODE=production`.
