@@ -174,6 +174,62 @@ describe("UserChatWorkspace", () => {
       title: "Use my default agent",
     });
   });
+
+  it("renders streamed activity and source references", async () => {
+    hookMocks.createConversation.mockResolvedValueOnce(createConversationResponse());
+    hookMocks.appendMessage.mockResolvedValueOnce(createMessageResponse());
+    hookMocks.createRun.mockResolvedValueOnce(createRunResponse());
+    hookMocks.startRunStream.mockImplementationOnce(({ onEvent }) => {
+      onEvent(
+        createRunEventResponse({
+          event_type: "activity.started",
+          payload: {
+            detail: "Fetching current public web information.",
+            status: "started",
+            title: "Searching the web",
+          },
+          sequence_number: 2,
+        }),
+      );
+      onEvent(
+        createRunEventResponse({
+          event_type: "source.discovered",
+          payload: {
+            provider: "duckduckgo",
+            snippet: "Latest release notes.",
+            source_type: "web",
+            title: "Ceph releases",
+            url: "https://docs.ceph.com/releases",
+          },
+          sequence_number: 3,
+        }),
+      );
+      onEvent(
+        createRunEventResponse({
+          event_type: "output.text_delta",
+          payload: { text: "See the cited source." },
+          sequence_number: 4,
+        }),
+      );
+
+      return Promise.resolve();
+    });
+
+    render(<UserChatWorkspace />);
+
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Search Ceph releases" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "↑" }));
+
+    expect(await screen.findByText("Searching the web")).toBeTruthy();
+    expect(screen.getByText("Fetching current public web information.")).toBeTruthy();
+    expect(screen.getByText("See the cited source.")).toBeTruthy();
+    expect(screen.getAllByText("Ceph releases").length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "duckduckgo" }).getAttribute("href")).toBe(
+      "https://docs.ceph.com/releases",
+    );
+  });
 });
 
 function createPublishedAgentResponse() {

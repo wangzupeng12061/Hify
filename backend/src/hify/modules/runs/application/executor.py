@@ -49,6 +49,8 @@ from hify.shared.domain.ids import new_uuid
 
 MAX_TOOL_ITERATIONS = 5
 WORKFLOW_RUNTIME_UNSUPPORTED_DEFINITION = "WORKFLOW_RUNTIME_UNSUPPORTED_DEFINITION"
+MAX_SOURCE_EVENTS_PER_RESULT = 5
+MAX_SOURCE_SNIPPET_LENGTH = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +118,15 @@ class WorkflowRuntimeNode:
     node_id: str
     kind: Literal["start", "llm", "tool", "end"]
     config: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceReference:
+    source_type: str
+    title: str
+    url: str | None
+    snippet: str | None
+    provider: str | None
 
 
 class ToolExecutionFailedError(Exception):
@@ -424,7 +435,7 @@ class RunExecutor:
             run = await self._mark_run_failed(run_id, step_id, exc.code, exc.message)
             raise ToolExecutionFailedError(run) from exc
 
-        await self._record_tool_result(run_id, step_id, tool_call, result.content)
+        await self._record_tool_result(run_id, step_id, tool_call, result)
         return ModelMessage(role="tool", content=result.content)
 
     async def _build_system_prompt(
@@ -465,6 +476,12 @@ class RunExecutor:
             RunStepType.RETRIEVAL,
             "Knowledge retrieval",
             {"knowledge_base_ids": [str(item) for item in knowledge_base_ids]},
+        )
+        await self._record_activity_started(
+            run.id,
+            step.id,
+            title="Searching knowledge bases",
+            detail=f"Retrieving context from {len(knowledge_base_ids)} knowledge base(s).",
         )
         try:
             chunks = await self._knowledge_retriever.retrieve(
@@ -510,6 +527,35 @@ class RunExecutor:
                 },
                 now=now,
             )
+            source_events = [
+                run.create_event(
+                    event_type=RunEventType.SOURCE_DISCOVERED,
+                    payload={
+                        "source_type": "knowledge",
+                        "title": f"Knowledge chunk {chunk.position + 1}",
+                        "url": None,
+                        "snippet": _truncate_source_snippet(chunk.content),
+                        "provider": "knowledge",
+                        "step_id": str(step.id),
+                        "chunk_id": str(chunk.chunk_id),
+                        "knowledge_base_id": str(chunk.knowledge_base_id),
+                        "document_id": str(chunk.document_id),
+                        "score": chunk.score,
+                    },
+                    now=now,
+                )
+                for chunk in chunks[:MAX_SOURCE_EVENTS_PER_RESULT]
+            ]
+            activity_completed_event = run.create_event(
+                event_type=RunEventType.ACTIVITY_COMPLETED,
+                payload={
+                    "step_id": str(step.id),
+                    "title": "Knowledge context retrieved",
+                    "detail": f"Found {len(chunks)} relevant chunk(s).",
+                    "status": "completed",
+                },
+                now=now,
+            )
             step.mark_succeeded(now)
             step_succeeded_event = run.create_event(
                 event_type=RunEventType.STEP_SUCCEEDED,
@@ -519,6 +565,9 @@ class RunExecutor:
             await unit_of_work.steps.save(step)
             await unit_of_work.runs.save(run)
             await unit_of_work.events.add(result_event)
+            for source_event in source_events:
+                await unit_of_work.events.add(source_event)
+            await unit_of_work.events.add(activity_completed_event)
             await unit_of_work.events.add(step_succeeded_event)
             await unit_of_work.commit()
 
@@ -733,6 +782,12 @@ class RunExecutor:
                 "Tool call",
                 {"tool_call_id": tool_call.tool_call_id, "tool_id": tool_call.name},
             )
+            await self._record_activity_started(
+                run_id,
+                step.id,
+                title="Calling tool",
+                detail=f"Executing tool {tool_call.name}.",
+            )
             try:
                 result = await self._tool_executor.execute_tool(
                     ToolExecutionRequest(
@@ -746,7 +801,7 @@ class RunExecutor:
                 run = await self._mark_run_failed(run_id, step.id, exc.code, exc.message)
                 raise ToolExecutionFailedError(run) from exc
 
-            await self._record_tool_result(run_id, step.id, tool_call, result.content)
+            await self._record_tool_result(run_id, step.id, tool_call, result)
             messages.append(ModelMessage(role="tool", content=result.content))
         return messages
 
@@ -793,7 +848,7 @@ class RunExecutor:
         run_id: UUID,
         step_id: UUID,
         tool_call: PendingToolCall,
-        content: str,
+        result: ToolExecutionResult,
     ) -> None:
         now = self._clock.now()
         async with self._unit_of_work_factory() as unit_of_work:
@@ -806,7 +861,34 @@ class RunExecutor:
                     "step_id": str(step.id),
                     "tool_call_id": tool_call.tool_call_id,
                     "tool_id": tool_call.name,
-                    "content_size": len(content),
+                    "content_size": len(result.content),
+                },
+                now=now,
+            )
+            source_events = [
+                run.create_event(
+                    event_type=RunEventType.SOURCE_DISCOVERED,
+                    payload={
+                        "source_type": source.source_type,
+                        "title": source.title,
+                        "url": source.url,
+                        "snippet": source.snippet,
+                        "provider": source.provider,
+                        "step_id": str(step.id),
+                        "tool_call_id": tool_call.tool_call_id,
+                        "tool_id": tool_call.name,
+                    },
+                    now=now,
+                )
+                for source in _source_references_from_tool_result(result)
+            ]
+            activity_completed_event = run.create_event(
+                event_type=RunEventType.ACTIVITY_COMPLETED,
+                payload={
+                    "step_id": str(step.id),
+                    "title": "Tool call completed",
+                    "detail": f"Tool returned {len(result.content)} characters.",
+                    "status": "completed",
                 },
                 now=now,
             )
@@ -819,7 +901,35 @@ class RunExecutor:
             await unit_of_work.steps.save(step)
             await unit_of_work.runs.save(run)
             await unit_of_work.events.add(result_event)
+            for source_event in source_events:
+                await unit_of_work.events.add(source_event)
+            await unit_of_work.events.add(activity_completed_event)
             await unit_of_work.events.add(step_succeeded_event)
+            await unit_of_work.commit()
+
+    async def _record_activity_started(
+        self,
+        run_id: UUID,
+        step_id: UUID,
+        *,
+        title: str,
+        detail: str,
+    ) -> None:
+        now = self._clock.now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            run = await _require_run(unit_of_work, run_id)
+            event = run.create_event(
+                event_type=RunEventType.ACTIVITY_STARTED,
+                payload={
+                    "step_id": str(step_id),
+                    "title": title,
+                    "detail": detail,
+                    "status": "started",
+                },
+                now=now,
+            )
+            await unit_of_work.runs.save(run)
+            await unit_of_work.events.add(event)
             await unit_of_work.commit()
 
     async def _mark_run_succeeded(self, run_id: UUID, step_id: UUID) -> RunInfo:
@@ -1061,6 +1171,61 @@ def _payload_for_chunk(chunk: ModelChunk) -> dict[str, object]:
             "message": chunk.message,
         }
     return {"chunk_type": "unknown"}
+
+
+def _source_references_from_tool_result(
+    result: ToolExecutionResult,
+) -> tuple[SourceReference, ...]:
+    try:
+        parsed = json.loads(result.content)
+    except json.JSONDecodeError:
+        return ()
+    if not isinstance(parsed, dict):
+        return ()
+
+    raw_results = parsed.get("results")
+    if not isinstance(raw_results, list):
+        return ()
+    provider = _optional_payload_string(result.metadata.get("provider"))
+    references: list[SourceReference] = []
+    seen_urls: set[str] = set()
+    for item in raw_results:
+        if len(references) >= MAX_SOURCE_EVENTS_PER_RESULT:
+            break
+        if not isinstance(item, dict):
+            continue
+        url = _optional_payload_string(item.get("url"))
+        title = _optional_payload_string(item.get("title"))
+        snippet = _optional_payload_string(item.get("snippet"))
+        if url is None or title is None or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        references.append(
+            SourceReference(
+                source_type="web",
+                title=title[:120],
+                url=url,
+                snippet=_truncate_source_snippet(snippet),
+                provider=provider,
+            )
+        )
+    return tuple(references)
+
+
+def _truncate_source_snippet(value: object) -> str | None:
+    text = _optional_payload_string(value)
+    if text is None:
+        return None
+    if len(text) <= MAX_SOURCE_SNIPPET_LENGTH:
+        return text
+    return f"{text[: MAX_SOURCE_SNIPPET_LENGTH - 3]}..."
+
+
+def _optional_payload_string(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.strip().split())
+    return normalized or None
 
 
 async def _require_run(unit_of_work: RunsUnitOfWork, run_id: UUID) -> AgentRun:
