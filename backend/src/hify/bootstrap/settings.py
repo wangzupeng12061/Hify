@@ -31,3 +31,6 @@ class Settings(BaseSettings):
     auth_trusted_display_name_header: str = "cf-access-authenticated-user-name"
     auth_trusted_team_name: str = "Hify"
     auth_trusted_default_role: Literal["admin", "member", "viewer"] = "member"
+    web_search_enabled: bool = True
+    web_search_timeout_seconds: float = 10.0
+    web_search_max_results: int = 5

@@ -22,6 +22,10 @@ from hify.modules.tools.application.queries.get_tool import (
 from hify.modules.tools.contracts.services import ToolCatalog, ToolExecutor
 from hify.modules.tools.infrastructure.adapters.builtin import EmptyBuiltinToolInvoker
 from hify.modules.tools.infrastructure.adapters.http import HttpxToolInvoker
+from hify.modules.tools.infrastructure.adapters.web_search import (
+    DuckDuckGoWebSearchTool,
+    WEB_SEARCH_BUILTIN_NAME,
+)
 from hify.modules.tools.infrastructure.database.uow import SqlAlchemyToolsUnitOfWork
 from hify.shared.domain.clock import Clock, SystemClock
 
@@ -40,6 +44,9 @@ def create_tools_module(
     mcp_tool_invoker: McpToolInvoker,
     clock: Clock | None = None,
     request_authenticator: RequestAuthenticator | None = None,
+    web_search_enabled: bool = True,
+    web_search_timeout_seconds: float = 10.0,
+    web_search_max_results: int = 5,
 ) -> ToolsModule:
     module_clock = clock or SystemClock()
 
@@ -55,9 +62,16 @@ def create_tools_module(
     get_tool_for_actor_handler = GetToolForActorHandler(get_tool_handler)
     list_tools_for_actor_handler = ListToolsForActorHandler(unit_of_work_factory)
     tool_catalog = ToolCatalogService(get_tool_handler, unit_of_work_factory)
+    builtin_tool_handlers = {}
+    if web_search_enabled:
+        web_search_tool = DuckDuckGoWebSearchTool(
+            timeout_seconds=web_search_timeout_seconds,
+            default_max_results=web_search_max_results,
+        )
+        builtin_tool_handlers[WEB_SEARCH_BUILTIN_NAME] = web_search_tool.invoke
     tool_executor = ToolRuntimeExecutor(
         unit_of_work_factory,
-        EmptyBuiltinToolInvoker(),
+        EmptyBuiltinToolInvoker(builtin_tool_handlers),
         HttpxToolInvoker(),
         mcp_tool_invoker,
     )
