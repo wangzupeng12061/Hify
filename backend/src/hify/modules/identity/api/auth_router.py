@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import secrets
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 
 from hify.modules.identity.api.dependencies import RequestAuthenticator
 from hify.modules.identity.api.schemas import (
     ActorContextResponse,
     AuthSessionResponse,
+    BootstrapFirstAdminRequest,
     DevLoginRequest,
     OidcLoginResponse,
+)
+from hify.modules.identity.application.commands.bootstrap_first_admin import (
+    BootstrapFirstAdminCommand,
+    BootstrapFirstAdminHandler,
 )
 from hify.modules.identity.application.commands.create_dev_session import (
     CreateDevSessionCommand,
@@ -21,6 +27,7 @@ from hify.modules.identity.application.commands.revoke_session import (
     RevokeSessionHandler,
 )
 from hify.modules.identity.contracts.dto import ActorContext
+from hify.modules.identity.domain.errors import FirstAdminAlreadyBootstrappedError, IdentityError
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,11 +38,13 @@ class AuthRouterConfig:
     dev_login_enabled: bool
     session_ttl_seconds: int
     oidc_enabled: bool
+    bootstrap_token: str | None
 
 
 def create_auth_router(
     *,
     config: AuthRouterConfig,
+    bootstrap_first_admin_handler: BootstrapFirstAdminHandler,
     create_dev_session_handler: CreateDevSessionHandler,
     revoke_session_handler: RevokeSessionHandler,
     request_authenticator: RequestAuthenticator,
@@ -69,6 +78,46 @@ def create_auth_router(
                 ttl_seconds=config.session_ttl_seconds,
             )
         )
+        _set_session_cookie(response, config=config, token=result.token)
+        return AuthSessionResponse(
+            actor=_actor_response(result.actor),
+            expires_at=result.expires_at,
+        )
+
+    @router.post(
+        "/bootstrap/first-admin",
+        response_model=AuthSessionResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def bootstrap_first_admin(
+        request: BootstrapFirstAdminRequest,
+        response: Response,
+        authorization: str | None = Header(default=None),
+    ) -> AuthSessionResponse:
+        _require_bootstrap_token(config=config, authorization=authorization)
+
+        try:
+            result = await bootstrap_first_admin_handler.handle(
+                BootstrapFirstAdminCommand(
+                    email=request.email,
+                    display_name=request.display_name,
+                    team_name=request.team_name,
+                    ttl_seconds=config.session_ttl_seconds,
+                )
+            )
+        except FirstAdminAlreadyBootstrappedError as exc:
+            raise _auth_error(
+                status.HTTP_409_CONFLICT,
+                code=exc.code,
+                message=exc.message,
+            ) from exc
+        except IdentityError as exc:
+            raise _auth_error(
+                status.HTTP_400_BAD_REQUEST,
+                code=exc.code,
+                message=exc.message,
+            ) from exc
+
         _set_session_cookie(response, config=config, token=result.token)
         return AuthSessionResponse(
             actor=_actor_response(result.actor),
@@ -127,6 +176,33 @@ def _actor_response(actor: ActorContext) -> ActorContextResponse:
         role=actor.role,
         permissions=actor.permissions,
     )
+
+
+def _require_bootstrap_token(*, config: AuthRouterConfig, authorization: str | None) -> None:
+    configured_token = config.bootstrap_token
+    if configured_token is None or configured_token.strip() == "":
+        raise _auth_error(
+            status.HTTP_403_FORBIDDEN,
+            code="IDENTITY_BOOTSTRAP_DISABLED",
+            message="first administrator bootstrap is disabled",
+        )
+
+    token = _bearer_token(authorization)
+    if token is None or not secrets.compare_digest(token, configured_token):
+        raise _auth_error(
+            status.HTTP_403_FORBIDDEN,
+            code="IDENTITY_BOOTSTRAP_FORBIDDEN",
+            message="first administrator bootstrap token is invalid",
+        )
+
+
+def _bearer_token(authorization: str | None) -> str | None:
+    if authorization is None:
+        return None
+    scheme, separator, token = authorization.strip().partition(" ")
+    if separator == "" or scheme.lower() != "bearer" or token.strip() == "":
+        return None
+    return token.strip()
 
 
 def _oidc_not_implemented(message: str) -> HTTPException:

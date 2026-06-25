@@ -40,17 +40,42 @@ not Kubernetes.
 
 - Run `migration` as a one-shot job before rolling API and Worker containers.
 - Expose only the reverse proxy or platform load balancer to the public network.
+- Set `HIFY_DEPLOYMENT_MODE=production`.
+- Set `HIFY_AUTH_DEV_LOGIN_ENABLED=false`.
+- For the first small internal rollout, put Hify behind Cloudflare Access or an
+  equivalent identity-aware reverse proxy and set
+  `HIFY_AUTH_TRUSTED_HEADER_ENABLED=true`.
+- Keep direct origin access blocked when trusted-header authentication is
+  enabled. Do not trust client-supplied identity headers from the public
+  internet.
 - Keep PostgreSQL, Redis, Worker, and any Ollama host private.
 - Disable proxy buffering for `/api/runs/*/execute-stream`.
 - Use managed PostgreSQL with pgvector, managed Redis, and managed object
   storage where available.
 - Store real secrets in the platform secret manager, not in `.env`.
 
+## First Administrator Bootstrap
+
+Set a high-entropy `HIFY_AUTH_BOOTSTRAP_TOKEN` only for initial setup, deploy
+the API, then call:
+
+```bash
+curl -i https://hify.example.com/api/auth/bootstrap/first-admin \
+  -H "Authorization: Bearer ${HIFY_AUTH_BOOTSTRAP_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"owner@example.com","display_name":"Owner","team_name":"Hify"}'
+```
+
+After the response sets the `hify_session` cookie and the owner exists, remove
+`HIFY_AUTH_BOOTSTRAP_TOKEN` from the runtime environment and redeploy. Later
+users should authenticate through the configured trusted identity header and are
+added to the bootstrapped team with `HIFY_AUTH_TRUSTED_DEFAULT_ROLE`.
+
 ## Known Release Blockers
 
-- Local verification uses `HIFY_AUTH_DEV_LOGIN_ENABLED=true`. Production must
-  disable developer login and finish the OIDC callback implementation before
-  exposing the app to users.
+- Full OIDC authorization-code login is still not implemented. Use the
+  trusted-header mode only behind Cloudflare Access or an equivalent
+  identity-aware proxy for the first small rollout.
 - Object storage presigned upload configuration is not represented in settings
   yet. Keep RAG smoke tests to flows currently implemented by the backend until
   storage settings are added.

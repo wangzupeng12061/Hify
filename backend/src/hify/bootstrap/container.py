@@ -52,6 +52,12 @@ def create_container(settings: Settings | None = None) -> HifyContainer:
         auth_session_ttl_seconds=resolved_settings.auth_session_ttl_seconds,
         auth_dev_login_enabled=resolved_settings.auth_dev_login_enabled,
         auth_oidc_enabled=resolved_settings.auth_oidc_enabled,
+        auth_bootstrap_token=resolved_settings.auth_bootstrap_token,
+        auth_trusted_header_enabled=resolved_settings.auth_trusted_header_enabled,
+        auth_trusted_email_header=resolved_settings.auth_trusted_email_header,
+        auth_trusted_display_name_header=resolved_settings.auth_trusted_display_name_header,
+        auth_trusted_team_name=resolved_settings.auth_trusted_team_name,
+        auth_trusted_default_role=resolved_settings.auth_trusted_default_role,
     )
     providers = create_providers_module(
         session_factory,

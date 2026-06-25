@@ -83,6 +83,66 @@ def test_health_ready_fails_when_database_is_unavailable() -> None:
     assert response.json()["checks"]["database"] == "unavailable"
 
 
+def test_health_ready_rejects_development_login_in_production() -> None:
+    client = TestClient(
+        create_app(
+            _container(
+                Settings(
+                    deployment_mode="production",
+                    provider_credential_encryption_key="configured",
+                    auth_dev_login_enabled=True,
+                    redis_url="",
+                )
+            )
+        )
+    )
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["checks"]["auth"] == "development_login_enabled"
+
+
+def test_health_ready_rejects_unimplemented_oidc_only_in_production() -> None:
+    client = TestClient(
+        create_app(
+            _container(
+                Settings(
+                    deployment_mode="production",
+                    provider_credential_encryption_key="configured",
+                    auth_oidc_enabled=True,
+                    redis_url="",
+                )
+            )
+        )
+    )
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["checks"]["auth"] == "oidc_not_implemented"
+
+
+def test_health_ready_accepts_trusted_header_auth_in_production() -> None:
+    client = TestClient(
+        create_app(
+            _container(
+                Settings(
+                    deployment_mode="production",
+                    provider_credential_encryption_key="configured",
+                    auth_trusted_header_enabled=True,
+                    redis_url="",
+                )
+            )
+        )
+    )
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json()["checks"]["auth"] == "ok"
+
+
 def _container(settings: Settings, *, engine: object | None = None) -> Any:
     return SimpleNamespace(
         settings=settings,

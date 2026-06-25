@@ -85,6 +85,8 @@ flowchart TB
 职责：
 
 - 终止 TLS，强制 HTTP 跳转 HTTPS。
+- 可选地承载 Cloudflare Access、OIDC Proxy 等身份感知访问控制，并向
+  API 传递受信任用户邮箱 Header。
 - `/` 路由到 Next.js；`/api/*` 和 `/events/*` 直接路由到 FastAPI。
 - 对 API 副本执行负载均衡和健康检查。
 - 保持 SSE 连接，不缓存、不缓冲流式响应。
@@ -99,6 +101,7 @@ idle timeout: 700s
 request body limit: 10 MiB
 upload path: no large file body; use presigned S3 upload
 X-Forwarded-Proto / Host / For: preserved
+Trusted identity headers: only from an identity-aware proxy, never from direct public traffic
 ```
 
 不得让 Next.js 代理 SSE；浏览器在同一域名下直接连接 FastAPI，减少一层缓冲和断线点。
@@ -140,6 +143,11 @@ API 必须无状态：
 - 限流、短期缓存、Celery Broker 和熔断状态进入 Redis。
 - 文件进入 S3。
 - 禁止依赖本地磁盘保存上传文件、Checkpoint 或用户会话。
+
+一期小范围真实使用可以先采用可信 Header 认证模式：API 只信任由
+Cloudflare Access 或等价身份感知反代注入的邮箱 Header，并自动把用户加入已
+由首管理员初始化的团队。启用该模式时必须阻断直连源站访问；否则客户端可伪造
+身份 Header。完整 OIDC 回调实现完成后，应优先切换到 OIDC 登录。
 
 ### 3.4 Celery Worker
 

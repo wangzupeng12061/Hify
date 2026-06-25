@@ -87,6 +87,18 @@ class SqlAlchemyMembershipRepository:
             return None
         return _membership_from_model(model)
 
+    async def has_active_owner(self) -> bool:
+        statement = (
+            select(TeamMembershipModel.id)
+            .where(
+                TeamMembershipModel.role == TeamRole.OWNER.value,
+                TeamMembershipModel.status == MembershipStatus.ACTIVE.value,
+            )
+            .limit(1)
+        )
+        membership_id = await self._session.scalar(statement)
+        return membership_id is not None
+
 
 class SqlAlchemyAuthSessionRepository:
     def __init__(self, session: AsyncSession) -> None:
