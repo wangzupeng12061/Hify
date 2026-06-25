@@ -1,64 +1,82 @@
 "use client";
 
-import { useCallback, useMemo, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type RefObject,
+} from "react";
+import Link from "next/link";
 
 import { useAgents, type Agent } from "@/features/agents";
 import {
   useAppendConversationMessage,
   useConversationMessages,
+  useConversations,
   useCreateConversation,
 } from "@/features/conversations";
 import type { Conversation, ConversationMessage } from "@/features/conversations";
 import { useCreateRun, useRunEvents, useRunStream } from "@/features/runs";
 import type { Run, RunEvent } from "@/features/runs";
+import { useLocalSettings } from "@/features/settings";
 import { HifyApiError } from "@/lib/api/errors";
 
-type ConversationFormState = {
-  agentId: string;
-  title: string;
-};
-
-type MessageFormState = {
-  content: string;
-};
-
 const EMPTY_AGENTS: Agent[] = [];
-const initialConversationForm: ConversationFormState = {
-  agentId: "",
-  title: "",
-};
-const initialMessageForm: MessageFormState = {
-  content: "",
-};
+const EMPTY_CONVERSATIONS: Conversation[] = [];
+const PROMPT_SUGGESTIONS = [
+  "联网查询 2026 年世界杯最新赛况",
+  "总结这个知识库里的关键内容",
+  "帮我设计一个自动化工作流",
+  "分析最近一次 Agent 运行失败原因",
+];
 
 export function UserChatWorkspace() {
+  const { settings } = useLocalSettings();
   const agentsQuery = useAgents();
+  const conversationsQuery = useConversations({ limit: 20 });
   const createConversationMutation = useCreateConversation();
   const appendMessageMutation = useAppendConversationMessage();
   const createRunMutation = useCreateRun();
   const runStream = useRunStream();
-  const [conversationForm, setConversationForm] = useState(initialConversationForm);
-  const [messageForm, setMessageForm] = useState(initialMessageForm);
+  const [selectedAgentId, setSelectedAgentId] = useState("");
   const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [composerValue, setComposerValue] = useState("");
   const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
   const [run, setRun] = useState<Run | null>(null);
   const [streamedEvents, setStreamedEvents] = useState<RunEvent[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
+  const chatThreadEndRef = useRef<HTMLDivElement | null>(null);
 
   const agents = agentsQuery.data ?? EMPTY_AGENTS;
   const runnableAgents = useMemo(() => getRunnableAgents(agents), [agents]);
+  const configuredDefaultAgentId =
+    settings.defaultAgentId &&
+    runnableAgents.some((agent) => agent.id === settings.defaultAgentId)
+      ? settings.defaultAgentId
+      : "";
+  const effectiveAgentId = selectedAgentId || configuredDefaultAgentId || runnableAgents[0]?.id || "";
+  const conversations = conversationsQuery.data?.items ?? EMPTY_CONVERSATIONS;
   const conversationMessagesQuery = useConversationMessages(
     conversation ? { conversationId: conversation.id, limit: 50 } : null,
   );
-  const runEventsQuery = useRunEvents(run ? { runId: run.id, limit: 50 } : null);
-  const messages = conversationMessagesQuery.data?.items ?? localMessages;
+  const runEventsQuery = useRunEvents(run ? { runId: run.id, limit: 80 } : null);
   const events = useMemo(
     () => mergeRunEvents(runEventsQuery.data?.items ?? [], streamedEvents),
     [runEventsQuery.data?.items, streamedEvents],
   );
   const assistantOutput = useMemo(() => getAssistantOutput(events), [events]);
+  const toolActivities = useMemo(() => getToolActivities(events), [events]);
+  const messages = conversationMessagesQuery.data?.items ?? localMessages;
+  const isSubmitting =
+    createConversationMutation.isPending ||
+    appendMessageMutation.isPending ||
+    createRunMutation.isPending;
   const operationError =
     agentsQuery.error ??
+    conversationsQuery.error ??
     createConversationMutation.error ??
     appendMessageMutation.error ??
     createRunMutation.error ??
@@ -70,46 +88,48 @@ export function UserChatWorkspace() {
     setStreamedEvents((currentEvents) => mergeRunEvents(currentEvents, [event]));
   }, []);
 
-  async function handleCreateConversation(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError(null);
-    runStream.stop();
-
-    try {
-      const createdConversation = await createConversationMutation.mutateAsync({
-        agent_id: conversationForm.agentId,
-        title: conversationForm.title.trim() || null,
-      });
-      setConversation(createdConversation);
-      setLocalMessages([]);
-      setRun(null);
-      setStreamedEvents([]);
-      setMessageForm(initialMessageForm);
-    } catch {
+  useEffect(() => {
+    if (!settings.autoScroll) {
       return;
     }
-  }
+    chatThreadEndRef.current?.scrollIntoView?.({ block: "end", behavior: "smooth" });
+  }, [assistantOutput, messages.length, settings.autoScroll, toolActivities.length]);
 
-  async function handleSendMessage(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const content = composerValue.trim();
+    if (!content) {
+      return;
+    }
     setFormError(null);
 
-    if (!conversation) {
-      setFormError("Create a conversation before sending a message.");
+    const agentId = effectiveAgentId;
+    if (!agentId) {
+      setFormError("No published agents are available. Ask an admin to publish one first.");
       return;
     }
 
     try {
+      const activeConversation =
+        conversation ??
+        (await createConversationMutation.mutateAsync({
+          agent_id: agentId,
+          title: titleFromPrompt(content),
+        }));
+      if (!conversation) {
+        setConversation(activeConversation);
+      }
+
       const message = await appendMessageMutation.mutateAsync({
-        content: messageForm.content.trim(),
-        conversationId: conversation.id,
+        content,
+        conversationId: activeConversation.id,
         idempotency_key: createIdempotencyKey("message"),
       });
       setLocalMessages((currentMessages) => [...currentMessages, message]);
-      setMessageForm(initialMessageForm);
+      setComposerValue("");
 
       const createdRun = await createRunMutation.mutateAsync({
-        conversation_id: conversation.id,
+        conversation_id: activeConversation.id,
         idempotency_key: createIdempotencyKey("run"),
       });
       setRun(createdRun);
@@ -117,6 +137,7 @@ export function UserChatWorkspace() {
       void runStream.start({
         onComplete: () => {
           void conversationMessagesQuery.refetch();
+          void conversationsQuery.refetch();
         },
         onEvent: handleRunStreamEvent,
         runId: createdRun.id,
@@ -126,198 +147,282 @@ export function UserChatWorkspace() {
     }
   }
 
+  function handleNewChat() {
+    runStream.stop();
+    setConversation(null);
+    setLocalMessages([]);
+    setRun(null);
+    setStreamedEvents([]);
+    setComposerValue("");
+    setFormError(null);
+  }
+
+  function handleSelectConversation(selectedConversation: Conversation) {
+    runStream.stop();
+    setConversation(selectedConversation);
+    setLocalMessages([]);
+    setRun(null);
+    setStreamedEvents([]);
+    setFormError(null);
+    setSelectedAgentId(selectedConversation.agent_id);
+  }
+
   return (
-    <div className="page-stack">
-      <section className="hero">
-        <p className="hero__eyebrow">Chat</p>
-        <h2>Use a published agent.</h2>
-        <p>
-          Start a conversation, send a message, and stream the assistant response. Configuration
-          and diagnostics live in the Admin Console.
-        </p>
-      </section>
-
-      {formError ? <ChatErrorBanner message={formError} /> : null}
-      {operationError ? <ChatErrorBanner error={operationError} /> : null}
-
-      <section className="provider-layout">
-        <ConversationForm
+    <div className="chat-shell">
+      <ChatSidebar
+        conversations={conversations}
+        currentConversationId={conversation?.id ?? null}
+        isLoading={conversationsQuery.isLoading}
+        onNewChat={handleNewChat}
+        onSelectConversation={handleSelectConversation}
+      />
+      <section className="chat-main">
+        <ChatHeader
           agentsLoading={agentsQuery.isLoading}
-          conversation={conversation}
-          form={conversationForm}
-          isSubmitting={createConversationMutation.isPending}
-          onChange={setConversationForm}
-          onSubmit={handleCreateConversation}
           runnableAgents={runnableAgents}
-        />
-        <MessageForm
-          conversation={conversation}
-          form={messageForm}
-          isSubmitting={appendMessageMutation.isPending || createRunMutation.isPending}
-          onChange={setMessageForm}
-          onSubmit={handleSendMessage}
+          selectedAgentId={effectiveAgentId}
           streamStatus={runStream.status}
+          onSelectAgent={setSelectedAgentId}
+        />
+
+        {formError ? <ChatErrorBanner message={formError} /> : null}
+        {operationError ? <ChatErrorBanner error={operationError} /> : null}
+
+        <div className="chat-main__body">
+          {conversation || messages.length > 0 || assistantOutput ? (
+            <MessageTimeline
+              assistantOutput={assistantOutput}
+              endRef={chatThreadEndRef}
+              isLoading={conversationMessagesQuery.isFetching}
+              messages={messages}
+              streamStatus={runStream.status}
+              toolActivities={settings.showToolActivity ? toolActivities : []}
+            />
+          ) : (
+            <ChatHome
+              onUseSuggestion={setComposerValue}
+              suggestions={PROMPT_SUGGESTIONS}
+            />
+          )}
+        </div>
+
+        <ChatComposer
+          disabled={isSubmitting}
+          onChange={setComposerValue}
+          onSubmit={handleSubmit}
+          value={composerValue}
         />
       </section>
-
-      <AssistantOutputPanel assistantOutput={assistantOutput} streamStatus={runStream.status} />
-      <ConversationMessages isLoading={conversationMessagesQuery.isFetching} messages={messages} />
     </div>
   );
 }
 
-function ConversationForm({
-  agentsLoading,
-  conversation,
-  form,
-  isSubmitting,
-  onChange,
-  onSubmit,
-  runnableAgents,
+function ChatSidebar({
+  conversations,
+  currentConversationId,
+  isLoading,
+  onNewChat,
+  onSelectConversation,
 }: {
-  agentsLoading: boolean;
-  conversation: Conversation | null;
-  form: ConversationFormState;
-  isSubmitting: boolean;
-  onChange: (form: ConversationFormState) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  runnableAgents: Agent[];
+  conversations: Conversation[];
+  currentConversationId: string | null;
+  isLoading: boolean;
+  onNewChat: () => void;
+  onSelectConversation: (conversation: Conversation) => void;
 }) {
   return (
-    <form className="panel form-panel" onSubmit={onSubmit}>
-      <p className="panel__eyebrow">Conversation</p>
-      <h2>Choose an agent</h2>
-      <label className="form-field">
-        Agent
+    <aside className="chat-sidebar" aria-label="Chat workspace">
+      <button className="chat-sidebar__new" onClick={onNewChat} type="button">
+        New chat
+      </button>
+      <div className="chat-sidebar__section">
+        <p className="chat-sidebar__label">Recent</p>
+        {isLoading ? <p className="chat-sidebar__empty">Loading conversations...</p> : null}
+        {!isLoading && conversations.length === 0 ? (
+          <p className="chat-sidebar__empty">No conversations yet.</p>
+        ) : null}
+        <div className="chat-sidebar__list">
+          {conversations.map((item) => (
+            <button
+              className="chat-sidebar__item"
+              data-active={item.id === currentConversationId}
+              key={item.id}
+              onClick={() => onSelectConversation(item)}
+              type="button"
+            >
+              <span>{item.title ?? "Untitled chat"}</span>
+              <small>{item.status}</small>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="chat-sidebar__footer">
+        <Link className="chat-sidebar__admin" href="/admin/agents">
+          Admin Console
+        </Link>
+      </div>
+    </aside>
+  );
+}
+
+function ChatHeader({
+  agentsLoading,
+  runnableAgents,
+  selectedAgentId,
+  streamStatus,
+  onSelectAgent,
+}: {
+  agentsLoading: boolean;
+  runnableAgents: Agent[];
+  selectedAgentId: string;
+  streamStatus: string;
+  onSelectAgent: (agentId: string) => void;
+}) {
+  return (
+    <header className="chat-header">
+      <div>
+        <p className="chat-header__eyebrow">Hify Agent</p>
+        <h2>Chat Workspace</h2>
+      </div>
+      <div className="chat-header__actions">
         <select
-          name="agentId"
-          onChange={(event) => onChange({ ...form, agentId: event.target.value })}
-          required
-          value={form.agentId}
+          aria-label="Agent"
+          className="chat-header__select"
+          disabled={agentsLoading || runnableAgents.length === 0}
+          onChange={(event) => onSelectAgent(event.target.value)}
+          value={selectedAgentId}
         >
-          <option value="">Select a published agent</option>
+          <option value="">Select agent</option>
           {runnableAgents.map((agent) => (
             <option key={agent.id} value={agent.id}>
               {agent.name} · v{agent.latest_version_number}
             </option>
           ))}
         </select>
-      </label>
-      <label className="form-field">
-        Title
-        <input
-          name="title"
-          onChange={(event) => onChange({ ...form, title: event.target.value })}
-          placeholder="Optional"
-          value={form.title}
-        />
-      </label>
-      {agentsLoading ? <p className="muted">Loading published agents...</p> : null}
-      {!agentsLoading && runnableAgents.length === 0 ? (
-        <p className="muted">No published agents are available. Ask an admin to publish one.</p>
-      ) : null}
-      <button className="button" disabled={isSubmitting} type="submit">
-        {isSubmitting ? "Starting..." : conversation ? "Switch conversation" : "Start conversation"}
-      </button>
-      {conversation ? <ResultLine label="Conversation" value={conversation.id} /> : null}
-    </form>
-  );
-}
-
-function MessageForm({
-  conversation,
-  form,
-  isSubmitting,
-  onChange,
-  onSubmit,
-  streamStatus,
-}: {
-  conversation: Conversation | null;
-  form: MessageFormState;
-  isSubmitting: boolean;
-  onChange: (form: MessageFormState) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  streamStatus: string;
-}) {
-  return (
-    <form className="panel form-panel" onSubmit={onSubmit}>
-      <p className="panel__eyebrow">Message</p>
-      <h2>Ask the agent</h2>
-      <label className="form-field">
-        Message
-        <textarea
-          disabled={!conversation}
-          name="content"
-          onChange={(event) => onChange({ content: event.target.value })}
-          required
-          rows={6}
-          value={form.content}
-        />
-      </label>
-      <button className="button" disabled={!conversation || isSubmitting} type="submit">
-        {isSubmitting ? "Sending..." : "Send and run"}
-      </button>
-      <ResultLine label="Stream" value={streamStatus} />
-    </form>
-  );
-}
-
-function AssistantOutputPanel({
-  assistantOutput,
-  streamStatus,
-}: {
-  assistantOutput: string;
-  streamStatus: string;
-}) {
-  return (
-    <section className="panel">
-      <div className="panel__header">
-        <div>
-          <p className="panel__eyebrow">Assistant</p>
-          <h2>Live response</h2>
-        </div>
-        <span className="status-pill">{streamStatus}</span>
+        <span className="chat-header__status">{streamStatus}</span>
       </div>
-      {assistantOutput ? (
-        <div className="assistant-output">{assistantOutput}</div>
-      ) : (
-        <p className="muted">No assistant output streamed yet.</p>
-      )}
-    </section>
+    </header>
   );
 }
 
-function ConversationMessages({
+function ChatHome({
+  onUseSuggestion,
+  suggestions,
+}: {
+  onUseSuggestion: (suggestion: string) => void;
+  suggestions: string[];
+}) {
+  return (
+    <div className="chat-home">
+      <p className="chat-home__kicker">Phase Two</p>
+      <h1>我能为你做什么？</h1>
+      <p>直接输入任务，Hify 会创建会话、调用已发布 Agent，并实时展示回复。</p>
+      <div className="chat-home__chips">
+        {suggestions.map((suggestion) => (
+          <button key={suggestion} onClick={() => onUseSuggestion(suggestion)} type="button">
+            {suggestion}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MessageTimeline({
+  assistantOutput,
+  endRef,
   isLoading,
   messages,
+  streamStatus,
+  toolActivities,
 }: {
+  assistantOutput: string;
+  endRef: RefObject<HTMLDivElement | null>;
   isLoading: boolean;
   messages: ConversationMessage[];
+  streamStatus: string;
+  toolActivities: ToolActivity[];
 }) {
   return (
-    <section className="panel">
-      <div className="panel__header">
-        <div>
-          <p className="panel__eyebrow">History</p>
-          <h2>Current conversation</h2>
+    <div className="chat-thread">
+      {isLoading ? <p className="chat-thread__loading">Refreshing conversation...</p> : null}
+      {messages.length === 0 && !assistantOutput ? (
+        <p className="chat-thread__empty">Send a message to start this chat.</p>
+      ) : null}
+      {messages.map((message) => (
+        <MessageBubble key={message.id} message={message} />
+      ))}
+      {toolActivities.length > 0 ? <ToolActivityCard activities={toolActivities} /> : null}
+      {assistantOutput ? (
+        <div className="message-bubble message-bubble--assistant">
+          <span>Assistant · {streamStatus}</span>
+          <p>{assistantOutput}</p>
         </div>
-        <span className="status-pill">{isLoading ? "Refreshing" : `${messages.length} messages`}</span>
-      </div>
-      {messages.length === 0 ? (
-        <p className="muted">No messages yet.</p>
-      ) : (
-        <ol className="timeline-list">
-          {messages.map((message) => (
-            <li className="timeline-list__item" key={message.id}>
-              <span>
-                #{message.sequence_number} {message.role}
-              </span>
-              <p>{message.content}</p>
-            </li>
-          ))}
-        </ol>
-      )}
-    </section>
+      ) : null}
+      <div ref={endRef} />
+    </div>
+  );
+}
+
+function MessageBubble({ message }: { message: ConversationMessage }) {
+  const isUser = message.role === "user";
+  return (
+    <div className={`message-bubble ${isUser ? "message-bubble--user" : "message-bubble--assistant"}`}>
+      <span>{isUser ? "You" : "Assistant"}</span>
+      <p>{message.content}</p>
+    </div>
+  );
+}
+
+type ToolActivity = {
+  detail: string;
+  key: string;
+  status: string;
+  title: string;
+};
+
+function ToolActivityCard({ activities }: { activities: ToolActivity[] }) {
+  return (
+    <div className="tool-activity-card">
+      <span>Agent activity</span>
+      {activities.map((activity) => (
+        <div className="tool-activity-card__item" key={activity.key}>
+          <strong>{activity.status}</strong>
+          <p>{activity.title}</p>
+          <small>{activity.detail}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ChatComposer({
+  disabled,
+  onChange,
+  onSubmit,
+  value,
+}: {
+  disabled: boolean;
+  onChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  value: string;
+}) {
+  return (
+    <form className="chat-composer" onSubmit={onSubmit}>
+      <button aria-label="Add context" className="chat-composer__ghost" type="button">
+        +
+      </button>
+      <textarea
+        aria-label="Message"
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="分配一个任务或提问任何问题"
+        rows={1}
+        value={value}
+      />
+      <button className="chat-composer__send" disabled={disabled || !value.trim()} type="submit">
+        ↑
+      </button>
+    </form>
   );
 }
 
@@ -328,19 +433,10 @@ function ChatErrorBanner({ error, message }: { error?: Error; message?: string }
       : (message ?? error?.message ?? "Chat operation failed.");
 
   return (
-    <section className="panel panel--danger" role="alert">
-      <p className="panel__eyebrow">Chat error</p>
-      <h2>Operation failed</h2>
-      <p className="muted">{errorMessage}</p>
+    <section className="chat-error" role="alert">
+      <strong>Operation failed</strong>
+      <p>{errorMessage}</p>
     </section>
-  );
-}
-
-function ResultLine({ label, value }: { label: string; value: string }) {
-  return (
-    <p className="form-result">
-      <strong>{label}:</strong> <code>{value}</code>
-    </p>
   );
 }
 
@@ -357,6 +453,11 @@ function createIdempotencyKey(prefix: string): string {
       : Math.random().toString(36).slice(2);
 
   return `${prefix}-${randomValue}`;
+}
+
+function titleFromPrompt(prompt: string): string {
+  const normalized = prompt.trim().split(/\s+/).join(" ");
+  return normalized.length > 36 ? `${normalized.slice(0, 36)}...` : normalized;
 }
 
 function mergeRunEvents(...eventGroups: RunEvent[][]): RunEvent[] {
@@ -377,4 +478,58 @@ function getAssistantOutput(events: RunEvent[]): string {
     .map((event) => event.payload.text)
     .filter((text): text is string => typeof text === "string")
     .join("");
+}
+
+function getToolActivities(events: RunEvent[]): ToolActivity[] {
+  return events.flatMap((event) => {
+    const chunkType = payloadString(event, "chunk_type");
+    if (event.event_type === "step.started" && payloadString(event, "step_type") === "tool_call") {
+      return [
+        {
+          detail: `Tool ID: ${payloadString(event, "tool_id") ?? "unknown"}`,
+          key: `${event.id}:started`,
+          status: "requested",
+          title: "Tool call started",
+        },
+      ];
+    }
+    if (chunkType === "tool_call_delta") {
+      return [
+        {
+          detail: truncate(payloadString(event, "arguments_delta") ?? "Waiting for arguments", 160),
+          key: `${event.id}:delta`,
+          status: "planning",
+          title: `Model requested tool ${payloadString(event, "name") ?? "unknown"}`,
+        },
+      ];
+    }
+    if (chunkType === "tool_result") {
+      return [
+        {
+          detail: `Result size: ${payloadNumber(event, "content_size") ?? 0} characters`,
+          key: `${event.id}:result`,
+          status: "completed",
+          title: `Tool result for ${payloadString(event, "tool_id") ?? "unknown"}`,
+        },
+      ];
+    }
+    return [];
+  });
+}
+
+function payloadString(event: RunEvent, key: string): string | null {
+  const value = event.payload[key];
+  return typeof value === "string" ? value : null;
+}
+
+function payloadNumber(event: RunEvent, key: string): number | null {
+  const value = event.payload[key];
+  return typeof value === "number" ? value : null;
+}
+
+function truncate(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength - 3)}...`;
 }

@@ -12,7 +12,11 @@ const hookMocks = vi.hoisted(() => ({
 
 vi.mock("@/features/agents", () => ({
   useAgents: () => ({
-    data: [createPublishedAgentResponse(), createDraftAgentResponse()],
+    data: [
+      createPublishedAgentResponse(),
+      createSecondPublishedAgentResponse(),
+      createDraftAgentResponse(),
+    ],
     error: null,
     isLoading: false,
   }),
@@ -32,6 +36,16 @@ vi.mock("@/features/conversations", () => ({
     },
     error: null,
     isFetching: false,
+    refetch: vi.fn(),
+  }),
+  useConversations: () => ({
+    data: {
+      has_more: false,
+      items: [],
+      next_cursor: null,
+    },
+    error: null,
+    isLoading: false,
     refetch: vi.fn(),
   }),
   useCreateConversation: () => ({
@@ -69,6 +83,7 @@ vi.mock("@/features/runs", () => ({
 describe("UserChatWorkspace", () => {
   afterEach(() => {
     cleanup();
+    window.localStorage.clear();
     vi.clearAllMocks();
   });
 
@@ -101,21 +116,16 @@ describe("UserChatWorkspace", () => {
     fireEvent.change(screen.getByLabelText("Agent"), {
       target: { value: "agent-1" },
     });
-    fireEvent.change(screen.getByLabelText("Title"), {
-      target: { value: "Support chat" },
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: " Help me " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Start conversation" }));
+    fireEvent.click(screen.getByRole("button", { name: "↑" }));
 
     await waitFor(() => expect(hookMocks.createConversation).toHaveBeenCalledTimes(1));
     expect(hookMocks.createConversation).toHaveBeenCalledWith({
       agent_id: "agent-1",
-      title: "Support chat",
+      title: "Help me",
     });
-
-    fireEvent.change(screen.getByLabelText("Message"), {
-      target: { value: " Help me " },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Send and run" }));
 
     await waitFor(() => expect(hookMocks.appendMessage).toHaveBeenCalledTimes(1));
     expect(hookMocks.appendMessage).toHaveBeenCalledWith({
@@ -130,6 +140,39 @@ describe("UserChatWorkspace", () => {
       idempotency_key: expect.stringMatching(/^run-/),
     });
     expect(await screen.findByText("Hello from agent")).toBeTruthy();
+  });
+
+  it("uses the local default agent when no agent is selected manually", async () => {
+    window.localStorage.setItem(
+      "hify.localSettings",
+      JSON.stringify({
+        defaultAgentId: "agent-2",
+      }),
+    );
+    hookMocks.createConversation.mockResolvedValueOnce({
+      ...createConversationResponse(),
+      agent_id: "agent-2",
+    });
+    hookMocks.appendMessage.mockResolvedValueOnce(createMessageResponse());
+    hookMocks.createRun.mockResolvedValueOnce(createRunResponse());
+    hookMocks.startRunStream.mockResolvedValueOnce(undefined);
+
+    render(<UserChatWorkspace />);
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Agent") as HTMLSelectElement).value).toBe("agent-2");
+    });
+
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Use my default agent" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "↑" }));
+
+    await waitFor(() => expect(hookMocks.createConversation).toHaveBeenCalledTimes(1));
+    expect(hookMocks.createConversation).toHaveBeenCalledWith({
+      agent_id: "agent-2",
+      title: "Use my default agent",
+    });
   });
 });
 
@@ -156,6 +199,14 @@ function createDraftAgentResponse() {
     latest_version_number: 0,
     name: "Draft Agent",
     status: "draft",
+  };
+}
+
+function createSecondPublishedAgentResponse() {
+  return {
+    ...createPublishedAgentResponse(),
+    id: "agent-2",
+    name: "Research Agent",
   };
 }
 
